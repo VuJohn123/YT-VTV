@@ -1,5 +1,4 @@
-// ui.js - Giao diện panel, movable, countdown, monitoring
-
+// ui.js - Giao diện panel, movable, countdown, monitoring (FIXED)
 GM_addStyle(`
     #vtv-ult-panel {
         position: fixed; bottom: 20px; right: 20px;
@@ -80,6 +79,7 @@ GM_addStyle(`
 `);
 
 function createPanel() {
+    log('Creating panel...');
     const el = document.createElement('div');
     el.id = 'vtv-ult-panel';
     const hd = document.createElement('div');
@@ -109,18 +109,21 @@ function createPanel() {
         uiCollapsed = panel.classList.contains('collapsed');
         GM_setValue('vtvUlt_collapsed', uiCollapsed);
         document.getElementById('vtv-collapse-btn').textContent = uiCollapsed ? '+' : '–';
+        log('Panel collapsed:', uiCollapsed);
     });
     document.getElementById('vtv-close-btn').addEventListener('click', () => {
         panel.classList.add('hidden');
         uiHidden = true;
         GM_setValue('vtvUlt_hidden', true);
         mini.style.display = 'flex';
+        log('Panel hidden');
     });
     mini.addEventListener('click', () => {
         panel.classList.remove('hidden');
         uiHidden = false;
         GM_setValue('vtvUlt_hidden', false);
         mini.style.display = 'none';
+        log('Panel shown');
     });
 
     if (uiCollapsed) panel.classList.add('collapsed');
@@ -136,6 +139,7 @@ function createPanel() {
         panel.style.right = 'auto';
         panel.style.bottom = 'auto';
     }
+    log('Panel created');
 }
 
 function makePanelMovable(header) {
@@ -161,6 +165,7 @@ function makePanelMovable(header) {
             isDragging = false;
             const r = panel.getBoundingClientRect();
             GM_setValue('vtvUlt_panelPos', { left: r.left, top: r.top });
+            log('Panel moved to:', r.left, r.top);
         }
     });
 }
@@ -168,6 +173,7 @@ function makePanelMovable(header) {
 function setBody(html) {
     const b = document.getElementById('vtv-ult-body');
     if (b) b.innerHTML = html;
+    log('Panel body updated');
 }
 function setTitle(text) {
     const t = document.querySelector('#vtv-ult-header .title');
@@ -185,10 +191,12 @@ function addToggles(cid) {
     document.getElementById('vtv-auto')?.addEventListener('change', e => {
         autoPlay = e.target.checked;
         GM_setValue('vtvUlt_auto', autoPlay);
+        log('Auto play:', autoPlay);
     });
     document.getElementById('vtv-marathon')?.addEventListener('change', e => {
         marathon = e.target.checked;
         GM_setValue('vtvUlt_marathon', marathon);
+        log('Marathon:', marathon);
         if (marathon) {
             document.body.classList.add('vtv-marathon');
             if (typeof startAdBlocking === 'function') startAdBlocking();
@@ -200,6 +208,7 @@ function addToggles(cid) {
     document.getElementById('vtv-autoskip')?.addEventListener('change', e => {
         autoSkip = e.target.checked;
         GM_setValue('vtvUlt_autoskip', autoSkip);
+        log('Auto skip:', autoSkip);
     });
     if (marathon) {
         document.body.classList.add('vtv-marathon');
@@ -247,6 +256,7 @@ function renderFound(title, url, source) {
 }
 
 function cancelRedirect() {
+    log('Cancel redirect');
     redirectScheduled = false;
     if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
     if (panel) {
@@ -257,11 +267,15 @@ function cancelRedirect() {
 }
 
 function doRedirect() {
-    if (nextUrl && !adVideoDetected) window.location.href = nextUrl;
+    if (nextUrl && !adVideoDetected) {
+        log('Redirecting to:', nextUrl);
+        window.location.href = nextUrl;
+    }
 }
 
 function startCountdown(sec) {
     if (!autoPlay || !nextUrl || adVideoDetected) return;
+    log('Countdown started:', sec);
     redirectScheduled = true;
     const cd = document.getElementById('vtv-cd');
     if (cd) cd.textContent = `⏳ ${sec}s`;
@@ -280,17 +294,19 @@ function startCountdown(sec) {
 }
 
 function setupMonitoring() {
+    log('Setting up monitoring');
     if (videoEl) {
         videoEl.removeEventListener('ended', onVideoEnded);
         videoEl.removeEventListener('seeked', onSeeked);
     }
     videoEl = document.querySelector('video.html5-main-video');
     if (!videoEl) {
+        log('Video element not found, retrying...');
         setTimeout(setupMonitoring, 1000);
         return;
     }
     if (timeCheckInterval) clearInterval(timeCheckInterval);
-    lastTime = videoEl.currentTime;
+    vtvLastTime = videoEl.currentTime;
     if (seriesKey && autoSkip) setTimeout(() => applyAutoSkip(seriesKey), 2000);
 
     const checkAd = () => {
@@ -319,17 +335,18 @@ function getAdaptiveThreshold() {
     return Math.max(5, Math.min(30, Math.floor(videoEl.duration * 0.03)));
 }
 
-// onSeeked và onVideoEnded dùng biến lastTime toàn cục (đã khai báo trong utils.js)
 function onSeeked() {
     if (!videoEl || !autoPlay || !nextUrl || redirectScheduled || adVideoDetected) return;
     const cur = videoEl.currentTime;
-    if (cur > lastTime + 5) learnSkip(seriesKey, lastTime, cur);
-    lastTime = cur;
+    log('Seeked from', vtvLastTime, 'to', cur);
+    if (cur > vtvLastTime + 5) learnSkip(seriesKey, vtvLastTime, cur);
+    vtvLastTime = cur;
     const dur = videoEl.duration;
     if (dur && (dur - cur) <= getAdaptiveThreshold() * 2) startCountdown(Math.floor(dur - cur));
 }
 
 function onVideoEnded() {
+    log('Video ended');
     if (autoPlay && nextUrl && !adVideoDetected) {
         cancelRedirect();
         doRedirect();

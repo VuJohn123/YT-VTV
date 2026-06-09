@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
-// @version      7.0
+// @version      7.1
 // @description  Tất cả smart features: marathon, voice, PiP, movable UI, keyboard, profile, GIF...
 // @author       VuJohn123
-// @match        https://*.youtube.com/*
+// @match        https://www.youtube.com/*
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue

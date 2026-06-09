@@ -18,7 +18,7 @@ let currentProfile = GM_getValue('vtvUlt_currentProfile', 'default');
 let panelPos = GM_getValue('vtvUlt_panelPos', null);
 let voiceRecognition = null;
 let adObserver, adSkipInterval, adVideoDetected = false;
-let vtvLastTime = -1;   // <-- Biến duy nhất dùng chung cho toàn script
+let vtvLastTime = -1; // Biến thời gian duy nhất cho toàn script
 
 const log = (...a) => DEBUG && console.log('[VTV Ult]', ...a);
 const warn = (...a) => DEBUG && console.warn('[VTV Ult]', ...a);
