@@ -1,4 +1,4 @@
-// ui.js - Giao diện panel, movable, countdown, monitoring (FIXED)
+// ui.js - Giao diện panel, movable, countdown, monitoring, toggle mở rộng
 GM_addStyle(`
     #vtv-ult-panel {
         position: fixed; bottom: 20px; right: 20px;
@@ -54,7 +54,10 @@ GM_addStyle(`
     }
     #vtv-ult-panel .auto-toggle,
     #vtv-ult-panel .marathon-toggle,
-    #vtv-ult-panel .autoskip-toggle {
+    #vtv-ult-panel .autoskip-toggle,
+    #vtv-ult-panel .voice-toggle,
+    #vtv-ult-panel .audio-toggle,
+    #vtv-ult-panel .pip-toggle {
         display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: #aaa;
     }
     #vtv-ult-panel input[type="text"] {
@@ -139,6 +142,7 @@ function createPanel() {
         panel.style.right = 'auto';
         panel.style.bottom = 'auto';
     }
+    snapPanelToViewport();
     log('Panel created');
 }
 
@@ -163,11 +167,36 @@ function makePanelMovable(header) {
     document.addEventListener('mouseup', () => {
         if (isDragging) {
             isDragging = false;
+            snapPanelToViewport();
             const r = panel.getBoundingClientRect();
             GM_setValue('vtvUlt_panelPos', { left: r.left, top: r.top });
             log('Panel moved to:', r.left, r.top);
         }
     });
+    if (panelPos) {
+        panel.style.left = panelPos.left + 'px';
+        panel.style.top = panelPos.top + 'px';
+        panel.style.right = 'auto';
+        panel.style.bottom = 'auto';
+        snapPanelToViewport();
+    }
+}
+
+function snapPanelToViewport() {
+    const r = panel.getBoundingClientRect();
+    const margin = 20;
+    let newLeft = r.left, newTop = r.top;
+    const maxLeft = window.innerWidth - r.width - margin;
+    const maxTop = window.innerHeight - r.height - margin;
+    if (newLeft < margin) newLeft = margin;
+    if (newTop < margin) newTop = margin;
+    if (newLeft > maxLeft) newLeft = maxLeft;
+    if (newTop > maxTop) newTop = maxTop;
+    if (newLeft !== r.left || newTop !== r.top) {
+        panel.style.left = newLeft + 'px';
+        panel.style.top = newTop + 'px';
+        log('Panel snapped to:', newLeft, newTop);
+    }
 }
 
 function setBody(html) {
@@ -183,10 +212,15 @@ function setTitle(text) {
 function addToggles(cid) {
     const c = document.getElementById(cid);
     if (!c) return;
+    // Các toggle hiện có: auto, marathon, autoskip
+    // Thêm voice, audio, pip
     c.innerHTML += `
         <div class="auto-toggle"><label><input type="checkbox" id="vtv-auto" ${autoPlay ? 'checked' : ''}> Tự động chuyển</label></div>
         <div class="marathon-toggle"><label><input type="checkbox" id="vtv-marathon" ${marathon ? 'checked' : ''}> Marathon</label></div>
         <div class="autoskip-toggle"><label><input type="checkbox" id="vtv-autoskip" ${autoSkip ? 'checked' : ''}> Tự động tua intro</label></div>
+        <div class="voice-toggle"><label><input type="checkbox" id="vtv-voice" ${voiceEnabled ? 'checked' : ''}> Voice Control 🎤</label></div>
+        <div class="audio-toggle"><label><input type="checkbox" id="vtv-audio-mode" ${audioMode ? 'checked' : ''}> Audio Mode 🔇</label></div>
+        <div class="pip-toggle"><label><input type="checkbox" id="vtv-pip" ${pipEnabled ? 'checked' : ''}> Auto PiP 🖼️</label></div>
     `;
     document.getElementById('vtv-auto')?.addEventListener('change', e => {
         autoPlay = e.target.checked;
@@ -210,6 +244,37 @@ function addToggles(cid) {
         GM_setValue('vtvUlt_autoskip', autoSkip);
         log('Auto skip:', autoSkip);
     });
+    document.getElementById('vtv-voice')?.addEventListener('change', e => {
+        voiceEnabled = e.target.checked;
+        GM_setValue('vtvUlt_voice', voiceEnabled);
+        if (voiceEnabled) {
+            if (typeof startVoiceControl === 'function') startVoiceControl();
+        } else {
+            if (typeof stopVoiceControl === 'function') stopVoiceControl();
+        }
+        log('Voice control:', voiceEnabled);
+    });
+    document.getElementById('vtv-audio-mode')?.addEventListener('change', e => {
+        audioMode = e.target.checked;
+        GM_setValue('vtvUlt_audioMode', audioMode);
+        if (audioMode) {
+            if (typeof enableAudioMode === 'function') enableAudioMode();
+        } else {
+            if (typeof disableAudioMode === 'function') disableAudioMode();
+        }
+        log('Audio mode:', audioMode);
+    });
+    document.getElementById('vtv-pip')?.addEventListener('change', e => {
+        pipEnabled = e.target.checked;
+        GM_setValue('vtvUlt_pip', pipEnabled);
+        if (pipEnabled) {
+            if (typeof enableAutoPiP === 'function') enableAutoPiP();
+        } else {
+            if (typeof disableAutoPiP === 'function') disableAutoPiP();
+        }
+        log('Auto PiP:', pipEnabled);
+    });
+    // Kích hoạt marathon nếu đang bật
     if (marathon) {
         document.body.classList.add('vtv-marathon');
         if (typeof startAdBlocking === 'function') startAdBlocking();
