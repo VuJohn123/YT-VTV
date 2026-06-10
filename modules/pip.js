@@ -1,25 +1,18 @@
-// pip.js - Auto PiP khi chuyển tab
-
-function _onVisibilityChange() {
-    if (document.hidden && State.videoEl && !State.videoEl.paused) {
-        if (!document.pictureInPictureElement) {
-            State.videoEl.requestPictureInPicture().catch(() => {});
-        }
-    }
-}
-
+let pipAutoEnabled = false;
 function enableAutoPiP() {
-    if (State._pipEnabled) return;
-    State._pipEnabled = true;
-    document.addEventListener('visibilitychange', _onVisibilityChange);
+    if (pipAutoEnabled) return;
+    pipAutoEnabled = true;
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    log('Auto PiP enabled');
 }
-
 function disableAutoPiP() {
-    if (!State._pipEnabled) return;
-    State._pipEnabled = false;
-    document.removeEventListener('visibilitychange', _onVisibilityChange);
-    // Thoát PiP nếu đang active
-    if (document.pictureInPictureElement) {
-        document.exitPictureInPicture().catch(() => {});
+    if (!pipAutoEnabled) return;
+    pipAutoEnabled = false;
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    log('Auto PiP disabled');
+}
+function onVisibilityChange() {
+    if (document.hidden && videoEl && !videoEl.paused) {
+        if (!document.pictureInPictureElement) videoEl.requestPictureInPicture().catch(() => {});
     }
 }

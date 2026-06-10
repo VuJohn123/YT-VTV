@@ -1,41 +1,25 @@
-// search.js - Tìm kiếm YouTube
-
 async function searchYT(q) {
     log('Search:', q);
+    const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`);
+    const html = await res.text();
+    const m = html.match(/var ytInitialData\s*=\s*({.*?});/s);
+    if (!m) return [];
+    const json = JSON.parse(m[1]);
+    const vids = [];
     try {
-        const res  = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`);
-        const html = await res.text();
-
-        // Tìm boundary an toàn hơn: lấy từ "ytInitialData =" đến dấu ";" kết thúc object
-        const start = html.indexOf('var ytInitialData');
-        if (start === -1) return [];
-        const eqIdx = html.indexOf('=', start) + 1;
-        // Tìm ";" sau khi đóng object lớn nhất — dùng brace counter
-        let depth = 0, end = -1;
-        for (let i = eqIdx; i < html.length; i++) {
-            if      (html[i] === '{') depth++;
-            else if (html[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
-        }
-        if (end === -1) return [];
-
-        const json = JSON.parse(html.slice(eqIdx, end).trim());
-        const vids = [];
-        const sections = json?.contents?.twoColumnSearchResultsRenderer
-            ?.primaryContents?.sectionListRenderer?.contents ?? [];
-
+        const sections = json.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents;
         for (const sec of sections) {
-            for (const item of sec.itemSectionRenderer?.contents ?? []) {
-                const vr = item.videoRenderer;
-                if (vr) {
-                    const title   = vr.title?.runs?.[0]?.text || '';
-                    const videoId = vr.videoId;
-                    if (title && videoId) vids.push({ title, videoId });
+            if (sec.itemSectionRenderer) {
+                for (const item of sec.itemSectionRenderer.contents) {
+                    const vr = item.videoRenderer;
+                    if (vr) {
+                        const ti = vr.title?.runs?.[0]?.text || '';
+                        const vi = vr.videoId;
+                        if (ti && vi) vids.push({title: ti, videoId: vi});
+                    }
                 }
             }
         }
-        return vids;
-    } catch(e) {
-        warn('searchYT error:', e);
-        return [];
-    }
+    } catch(e) {}
+    return vids;
 }

@@ -1,4 +1,3 @@
-// utils.js - Biến toàn cục & hàm dùng chung (nâng cấp parseTitle)
 const DEBUG = true;
 const TARGET_CHANNEL = 'VTV Giải Trí Official';
 const AD_MAX_DURATION = 30;
@@ -32,14 +31,13 @@ function parseTitle(rawTitle) {
     let t = rawTitle.replace(/\s*-\s*YouTube$/i, '').trim();
     const r = { series: '', season: null, episode: null, segment: null, totalSeg: null, format: 'full' };
 
-    // Nhận dạng format
     if (/TRỰC TIẾP/i.test(t)) { r.format = 'live'; t = t.replace(/TRỰC TIẾP\s*/i, ''); }
     else if (/Preview/i.test(t)) { r.format = 'preview'; t = t.replace(/Preview\s*/i, ''); }
     else if (/Shorts/i.test(t)) { r.format = 'short'; t = t.replace(/Shorts\s*/i, ''); }
     else if (/Trailer Official/i.test(t)) { r.format = 'trailer'; t = t.replace(/Trailer Official\s*/i, ''); }
     else if (/Highlight|Trích đoạn/i.test(t)) r.format = 'highlight';
 
-    // Mẫu chính: "Tên series tập X [- P2] [(a/b)]" hoặc "Tên series P2 tập X [(a/b)]"
+    // Mẫu 1: "Tên series tập X - P2 (a/b)" hoặc "Tên series tập X (a/b)"
     let m = t.match(/^(.*?)\s+(?:tập|Tập|TẬP)\s*(\d+(?:\.\d+)?)(?:\s*[-–]\s*(?:P(\d+)|Phần\s*(\d+)))?\s*(?:\((\d+)\/(\d+)\))?/i);
     if (m) {
         r.series = m[1].trim();
@@ -47,7 +45,7 @@ function parseTitle(rawTitle) {
         r.season = m[3] ? parseInt(m[3]) : (m[4] ? parseInt(m[4]) : null);
         if (m[5] && m[6]) { r.segment = parseInt(m[5]); r.totalSeg = parseInt(m[6]); }
     } else {
-        // Mẫu thay thế: "Tên series P2 tập X [(a/b)]" (không dấu gạch ngang)
+        // Mẫu 2: "Tên series P2 tập X (a/b)" (không dấu gạch ngang)
         m = t.match(/^(.*?)\s+(?:P(\d+)|Phần\s*(\d+))\s+(?:tập|Tập|TẬP)\s*(\d+(?:\.\d+)?)\s*(?:\((\d+)\/(\d+)\))?/i);
         if (m) {
             r.series = m[1].trim();
@@ -55,7 +53,7 @@ function parseTitle(rawTitle) {
             r.episode = parseFloat(m[4]);
             if (m[5] && m[6]) { r.segment = parseInt(m[5]); r.totalSeg = parseInt(m[6]); }
         } else {
-            // Fallback cũ: số tập đứng sau dấu |
+            // Fallback: số tập sau dấu |
             m = t.match(/^(.*?)\s*\|\s*(?:tập|Tập|TẬP)\s*(\d+(?:\.\d+)?)/i);
             if (m) { r.series = m[1].trim(); r.episode = parseFloat(m[2]); }
             else {
@@ -65,7 +63,6 @@ function parseTitle(rawTitle) {
         }
     }
 
-    // Dọn dẹp series
     r.series = r.series.replace(/(?:FULL|Full|Shorts|Preview|Trailer|Trực tiếp|TRỰC TIẾP)/gi, '').trim()
         .replace(/\|\s*VTV Giải Trí\s*$/i, '').replace(/\s*\|\s*/g, ' - ').trim();
     if (!r.series && r.episode) {
@@ -84,11 +81,6 @@ function getYouTubeAutoplay() {
     return null;
 }
 
-/**
- * Từ danh sách tập đã thu thập, phát hiện các phân đoạn bị thiếu trong một tập.
- * @param {Array} list - Mảng các object {episode, segment, totalSeg}
- * @returns {Array} Mảng các object {episode, segment, totalSeg} bị thiếu
- */
 function suggestMissingSegments(list) {
     const byEp = {};
     for (const item of list) {

@@ -2,7 +2,7 @@
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
 // @version      7.4
-// @description  Đầy đủ: auto chuyển tập, marathon, voice, PiP, movable UI, audio mode, virtual playlist, stats, missing episodes, out‑of‑order warning...
+// @description  Auto chuyển tập, marathon, voice, PiP, movable UI, audio mode, virtual playlist, stats, missing episodes, out‑of‑order warning...
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -32,11 +32,6 @@
 
 (function() {
     'use strict';
-
-    // Khởi tạo biến trạng thái toàn cục nếu chưa có (được khai báo trong utils.js nhưng đảm bảo)
-    if (typeof voiceEnabled === 'undefined') window.voiceEnabled = GM_getValue('vtvUlt_voice', true);
-    if (typeof audioMode === 'undefined') window.audioMode = GM_getValue('vtvUlt_audioMode', false);
-    if (typeof pipEnabled === 'undefined') window.pipEnabled = GM_getValue('vtvUlt_pip', true);
 
     async function main() {
         cancelRedirect();
@@ -131,7 +126,7 @@
             if (ap) { nextUrl = ap.url; nextTitle = ap.title; }
         }
 
-        // Hiển thị tập thiếu
+        // Hiển thị tập/phân đoạn thiếu
         const missing = detectMissingEpisodes(episodeList);
         if (missing.episodes.length > 0 || missing.segments.length > 0) {
             let msg = '';
@@ -139,7 +134,7 @@
             if (missing.segments.length) {
                 msg += '⚠️ Phân đoạn thiếu: ';
                 msg += missing.segments.map(s => `Tập ${s.episode} (${s.segment}/${s.totalSeg})`).join(', ');
-             }
+            }
             const c = document.getElementById('vtv-panel-content');
             if (c) c.innerHTML += `<br><b>${msg}</b>`;
         }

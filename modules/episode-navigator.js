@@ -1,11 +1,10 @@
-// episode-navigator.js - Tìm tập tiếp theo, trước đó, danh sách (ưu tiên seg 1, suy luận thiếu)
 const MAX_EPISODES_IN_LIST = 10;
 
 async function findNext(info, channel) {
     const mk = (exact) => (INCLUDE_CHANNEL_IN_SEARCH && channel) ? `${exact} ${channel}` : exact;
     const partStr = info.season ? ` - P${info.season}` : '';
 
-    // 1. Nếu còn phân đoạn trong cùng tập → tìm segment tiếp theo
+    // 1. Còn phân đoạn trong cùng tập -> tìm segment tiếp theo
     if (info.segment && info.totalSeg && info.segment < info.totalSeg) {
         const segTitle = `${info.series} tập ${info.episode}${partStr} (${info.segment + 1}/${info.totalSeg})`;
         let r = await searchYT(mk(segTitle));
@@ -19,18 +18,18 @@ async function findNext(info, channel) {
         return null;
     }
 
-    // 2. Tìm tập tiếp theo, ưu tiên phân đoạn nhỏ nhất (segment 1 nếu có)
+    // 2. Tìm tập tiếp theo, ưu tiên segment nhỏ nhất
     const nextEp = info.episode + 1;
     const baseTitle = `${info.series} tập ${nextEp}${partStr}`;
     let r = await searchYT(mk(baseTitle));
-    if (channel && r.length === 0) r = await searchYT(baseTitle); // fallback không kênh
+    if (channel && r.length === 0) r = await searchYT(baseTitle);
 
     let candidates = r.filter(v => {
         const p = parseTitle(v.title);
         return p && p.series === info.series && p.episode === nextEp && (info.season ? p.season === info.season : !p.season);
     });
 
-    // Nếu không có ứng viên, thử suy luận từ danh sách tập đã biết (ví dụ: thiếu segment)
+    // Nếu không có, thử suy luận từ danh sách tập đã biết
     if (candidates.length === 0 && episodeList.length > 0) {
         const missing = suggestMissingSegments(episodeList);
         const nextMissing = missing.find(m => m.episode === nextEp && m.segment === 1);
@@ -52,7 +51,6 @@ async function findNext(info, channel) {
     }
 
     if (candidates.length === 0) {
-        // Cross-season
         if (info.season) {
             const ns = info.season + 1;
             const ct = `${info.series} tập 1 - P${ns} (1/${info.totalSeg || 1})`;
@@ -63,7 +61,7 @@ async function findNext(info, channel) {
         return null;
     }
 
-    // Sắp xếp theo segment tăng dần, ưu tiên segment 1
+    // Sắp xếp segment tăng dần, ưu tiên seg 1
     candidates.sort((a, b) => {
         const pa = parseTitle(a.title);
         const pb = parseTitle(b.title);
@@ -87,7 +85,6 @@ async function findPrevious(info, channel) {
         return p && p.series === info.series && p.episode === pe && (info.season ? p.season === info.season : !p.season);
     });
     if (candidates.length === 0) return null;
-    // Lấy segment lớn nhất (cuối cùng của tập trước)
     candidates.sort((a, b) => {
         const pa = parseTitle(a.title);
         const pb = parseTitle(b.title);

@@ -1,4 +1,3 @@
-// detectors.js - Phát hiện loại tập, thể loại phim
 function detectEpisodeType(title) {
     const t = title.toLowerCase();
     if (/trực tiếp|live/i.test(t)) return 'live';

@@ -1,70 +1,66 @@
-// storage.js - Profile, history, skip data
-function getProfilePrefix() { return 'vtvUlt_' + State.currentProfile + '_'; }
-
+function getProfilePrefix() { return 'vtvUlt_' + currentProfile + '_'; }
 function profileStore(key, value) {
     const fullKey = getProfilePrefix() + key;
-    if (value === undefined) return gmGet(fullKey);
-    gmSet(fullKey, value);
+    if (value === undefined) return GM_getValue(fullKey);
+    GM_setValue(fullKey, value);
 }
-
 function switchProfile(profileName) {
-    State.currentProfile = profileName;
+    currentProfile = profileName;
     GM_setValue('vtvUlt_currentProfile', profileName);
     location.reload();
 }
-
 function setupProfiles() {
     GM_registerMenuCommand('Chọn Profile', () => {
-        const profiles = gmGet('vtvUlt_profiles', ['default']);
-        const newProfile = prompt(
-            'Nhập tên profile (hiện tại: ' + State.currentProfile + ').\nCác profile: ' + profiles.join(', '),
-            State.currentProfile
-        );
-        if (newProfile && newProfile !== State.currentProfile) {
-            if (!profiles.includes(newProfile)) { profiles.push(newProfile); gmSet('vtvUlt_profiles', profiles); }
+        const profiles = GM_getValue('vtvUlt_profiles', ['default']);
+        const newProfile = prompt('Nhập tên profile (hiện tại: ' + currentProfile + ').\nCác profile: ' + profiles.join(', '), currentProfile);
+        if (newProfile && newProfile !== currentProfile) {
+            if (!profiles.includes(newProfile)) { profiles.push(newProfile); GM_setValue('vtvUlt_profiles', profiles); }
             switchProfile(newProfile);
         }
     });
 }
-
-function getHistory(key) {
-    return profileStore('history_' + key) || [];
+function getStoredSeries(key) {
+    const raw = profileStore('series_' + key);
+    return raw ? JSON.parse(raw) : null;
 }
-
+function storeSeries(key, lastEp, nextUrl, nextTitle) {
+    profileStore('series_' + key, JSON.stringify({lastEp, nextUrl, nextTitle}));
+}
+function clearSeries(key) {
+    GM_deleteValue(getProfilePrefix() + 'series_' + key);
+}
+function getHistory(key) {
+    const raw = profileStore('history_' + key);
+    return raw ? JSON.parse(raw) : [];
+}
 function addToHistory(key, episode, url, title) {
     const h = getHistory(key);
-    if (!h.find(e => e.episode === episode)) {
-        h.push({ episode, url, title });
-        profileStore('history_' + key, h);
-    }
+    if (!h.find(e => e.episode === episode)) { h.push({episode, url, title}); profileStore('history_' + key, JSON.stringify(h)); }
 }
-
 function getSkipData(key) {
-    return gmGet('vtvUlt_skipData' + key, { intros: [], outros: [] });
+    const raw = GM_getValue('vtvUlt_skipData' + key, null);
+    return raw ? JSON.parse(raw) : { intros: [], outros: [] };
 }
-
 function saveSkipData(key, data) {
-    gmSet('vtvUlt_skipData' + key, data);
+    GM_setValue('vtvUlt_skipData' + key, JSON.stringify(data));
 }
-
 function learnSkip(key, from, to) {
     const d = getSkipData(key);
-    const dur = State.videoEl?.duration || 0;
+    const dur = videoEl?.duration || 0;
     if (from < 5 && to > 5 && to < dur * 0.5) {
         d.intros.push(to);
-        if (d.intros.length >= 3) d.introAvg = Math.round(d.intros.reduce((a, b) => a + b, 0) / d.intros.length);
+        if (d.intros.length >= 3) d.introAvg = Math.round(d.intros.reduce((a,b)=>a+b,0) / d.intros.length);
     } else if (to > dur - 10 && from < dur - 5) {
         d.outros.push(from);
-        if (d.outros.length >= 3) d.outroAvg = Math.round(d.outros.reduce((a, b) => a + b, 0) / d.outros.length);
+        if (d.outros.length >= 3) d.outroAvg = Math.round(d.outros.reduce((a,b)=>a+b,0) / d.outros.length);
     }
     saveSkipData(key, d);
 }
-
 function applyAutoSkip(key) {
-    if (!State.autoSkip) return;
+    if (!autoSkip) return;
     const d = getSkipData(key);
-    if (d.introAvg && State.videoEl.currentTime < d.introAvg) {
+    if (d.introAvg && videoEl.currentTime < d.introAvg) {
         log('Auto-skip intro to', d.introAvg);
-        State.videoEl.currentTime = d.introAvg;
+        videoEl.currentTime = d.introAvg;
     }
 }
