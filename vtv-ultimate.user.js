@@ -2,7 +2,7 @@
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
 // @version      7.4
-// @description  Marathon, voice, PiP, movable UI, keyboard, profile, GIF, audio mode, virtual playlist, stats, missing episodes...
+// @description  Đầy đủ: auto chuyển tập, marathon, voice, PiP, movable UI, audio mode, virtual playlist, stats, missing episodes, out‑of‑order warning...
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -30,35 +30,29 @@
 // @run-at       document-end
 // ==/UserScript==
 
-(function () {
+(function() {
     'use strict';
 
+    // Khởi tạo biến trạng thái toàn cục nếu chưa có (được khai báo trong utils.js nhưng đảm bảo)
+    if (typeof voiceEnabled === 'undefined') window.voiceEnabled = GM_getValue('vtvUlt_voice', true);
+    if (typeof audioMode === 'undefined') window.audioMode = GM_getValue('vtvUlt_audioMode', false);
+    if (typeof pipEnabled === 'undefined') window.pipEnabled = GM_getValue('vtvUlt_pip', true);
+
     async function main() {
-        // Dọn dẹp state từ lần chạy trước
         cancelRedirect();
-        stopWatchTimer();
-        resetAudioMode();
+        nextUrl = null; nextTitle = ''; previousEp = null; episodeList = [];
+        adVideoDetected = false;
+        if (!panel) createPanel(); else if (!uiHidden) renderSearching();
 
-        State.nextUrl      = null;
-        State.nextTitle    = '';
-        State.previousEp   = null;
-        State.episodeList  = [];
-        State.adVideoDetected = false;
-
-        if (!State.panel) createPanel();
-        else if (!State.uiHidden) renderSearching();
-
-        State.channelName = await waitForChannel();
-        if (State.channelName !== TARGET_CHANNEL) {
+        channelName = await waitForChannel();
+        if (channelName !== TARGET_CHANNEL) {
             setTitle('❌ Sai kênh');
-            setBody(`<div>${escapeHTML(State.channelName) || 'Không xác định'}</div>`);
+            setBody(`<div>${channelName || 'Không xác định'}</div>`);
             return;
         }
 
-        const rawTitle = (
-            document.querySelector('h1.ytd-watch-metadata yt-formatted-string')?.getAttribute('title') ||
-            document.title
-        ).replace(/\s*-\s*YouTube$/, '').trim();
+        const rawTitle = (document.querySelector('h1.ytd-watch-metadata yt-formatted-string')?.getAttribute('title') || document.title)
+            .replace(/\s*-\s*YouTube$/, '').trim();
         log('Raw title:', rawTitle);
 
         if (document.querySelector('ytd-message-renderer #message') || document.body.innerText.includes('Video unavailable')) {
@@ -73,20 +67,9 @@
             const ap = getYouTubeAutoplay();
             if (ap) {
                 setTitle('🎞️ Gợi ý YouTube');
-                const body = document.getElementById('vtv-ult-body');
-                if (body) {
-                    body.innerHTML = '';
-                    const titleDiv = document.createElement('div');
-                    titleDiv.className = 'next-title';
-                    titleDiv.textContent = ap.title;
-                    const skipBtn = document.createElement('button');
-                    skipBtn.textContent = '⏭ Xem ngay';
-                    skipBtn.addEventListener('click', () => { window.location.href = ap.url; });
-                    body.appendChild(titleDiv);
-                    body.appendChild(skipBtn);
-                }
-                State.nextUrl   = ap.url;
-                State.nextTitle = ap.title;
+                setBody(`<div class="next-title">${escapeHTML(ap.title)}</div><button id="vtv-skip">⏭ Xem ngay</button>`);
+                document.getElementById('vtv-skip')?.addEventListener('click', () => { if (ap.url) window.location.href = ap.url; });
+                nextUrl = ap.url; nextTitle = ap.title;
             } else {
                 setBody('<div class="title">❌ Không nhận dạng được tập phim</div>');
             }
@@ -95,108 +78,92 @@
             return;
         }
 
-        State.parsedInfo = info;
-        State.seriesKey  = `${info.series}|S${info.season ?? 0}`;
-        addToHistory(State.seriesKey, info.episode, location.href, rawTitle);
+        parsedInfo = info;
+        seriesKey = `${info.series}|S${info.season ?? 0}`;
+        addToHistory(seriesKey, info.episode, location.href, rawTitle);
 
+        // Cảnh báo xem lệch tập
+        const stored = getStoredSeries(seriesKey);
+        if (stored) {
+            const lastWatched = stored.lastEp;
+            if (info.episode === lastWatched) {
+                log('Reload of last watched episode, continuing.');
+            } else if (info.episode === lastWatched + 1) {
+                log('Correct next episode.');
+            } else {
+                log(`Out-of-order: current=${info.episode}, expected=${lastWatched + 1}`);
+                renderOutOfOrder(info.episode, lastWatched + 1, stored.nextUrl);
+                return;
+            }
+        }
+
+        // Phân loại tập & thể loại
         const epType = detectEpisodeType(rawTitle);
         log('Episode type:', epType);
-
         let desc = '';
         try { desc = (unsafeWindow.ytInitialPlayerResponse?.videoDetails?.shortDescription) || ''; } catch(e) {}
-        log('Genres:', detectGenres(desc));
+        const genres = detectGenres(desc);
+        log('Genres:', genres);
+        updateSeriesStats(seriesKey, videoEl?.duration || 0);
 
-        // Tìm điều hướng song song
-        const [prevResult, listResult, nextResult] = await Promise.allSettled([
-            findPrevious(info, State.channelName),
-            findEpisodeList(info, State.channelName),
-            findNext(info, State.channelName),
-        ]);
-
-        State.previousEp  = prevResult.status  === 'fulfilled' ? prevResult.value  : null;
-        State.episodeList = listResult.status  === 'fulfilled' ? listResult.value  : [];
-        const next        = nextResult.status  === 'fulfilled' ? nextResult.value  : null;
+        previousEp = await findPrevious(info, channelName);
+        episodeList = await findEpisodeList(info, channelName);
+        const next = await findNext(info, channelName);
 
         if (next) {
-            State.nextUrl   = next.url;
-            State.nextTitle = next.title;
-            renderFound(State.nextTitle, State.nextUrl, next.source);
-            // Prefetch trang kế
-            const link = document.createElement('link');
-            link.rel  = 'prefetch';
-            link.href = State.nextUrl;
-            document.head.appendChild(link);
-            storeSeries(State.seriesKey, info.episode, State.nextUrl, State.nextTitle);
+            nextUrl = next.url; nextTitle = next.title;
+            renderFound(nextTitle, nextUrl, next.source);
+            const link = document.createElement('link'); link.rel = 'prefetch'; link.href = nextUrl; document.head.appendChild(link);
+            storeSeries(seriesKey, info.episode, nextUrl, nextTitle);
         } else {
             setTitle('❌ Không tìm thấy tập kế');
-            setBody(`
-                <input type="text" id="vtv-manual" placeholder="Tìm tập...">
-                <button id="vtv-manual-btn">Tìm</button>
-                <div id="vtv-panel-content"></div>
-            `);
+            setBody(`<input type="text" id="vtv-manual" placeholder="Tìm tập..."><button id="vtv-manual-btn">Tìm</button><div id="vtv-panel-content"></div>`);
             document.getElementById('vtv-manual-btn')?.addEventListener('click', async () => {
                 const q = document.getElementById('vtv-manual')?.value.trim();
-                if (!q) return;
-                const res = await searchYT(q);
-                const c   = document.getElementById('vtv-panel-content');
-                if (!c) return;
-                c.innerHTML = '';
-                const title = document.createElement('b');
-                title.textContent = 'Kết quả:';
-                const ul = document.createElement('ul');
-                ul.className = 'episode-list';
-                for (const r of res) {
-                    const a  = document.createElement('a');
-                    a.href        = `https://youtu.be/${r.videoId}`;
-                    a.textContent = r.title;
-                    ul.appendChild(Object.assign(document.createElement('li'), {})).appendChild(a);
+                if (q) {
+                    const res = await searchYT(q);
+                    const c = document.getElementById('vtv-panel-content');
+                    if (c) c.innerHTML = '<b>Kết quả:</b><ul class="episode-list">' + res.map(r => `<li><a href="https://youtu.be/${r.videoId}">${escapeHTML(r.title)}</a></li>`).join('') + '</ul>';
                 }
-                c.appendChild(title);
-                c.appendChild(ul);
             });
             addToggles('vtv-panel-content');
             const ap = getYouTubeAutoplay();
-            if (ap) { State.nextUrl = ap.url; State.nextTitle = ap.title; }
+            if (ap) { nextUrl = ap.url; nextTitle = ap.title; }
         }
 
         // Hiển thị tập thiếu
-        const missing = detectMissingEpisodes(State.episodeList);
-        if (missing.length) {
+        const missing = detectMissingEpisodes(episodeList);
+        if (missing.episodes.length > 0 || missing.segments.length > 0) {
+            let msg = '';
+            if (missing.episodes.length) msg += `⚠️ Tập bị thiếu: ${missing.episodes.join(', ')}. `;
+            if (missing.segments.length) {
+                msg += '⚠️ Phân đoạn thiếu: ';
+                msg += missing.segments.map(s => `Tập ${s.episode} (${s.segment}/${s.totalSeg})`).join(', ');
+             }
             const c = document.getElementById('vtv-panel-content');
-            if (c) {
-                const warn = document.createElement('div');
-                warn.innerHTML = `<br><b>⚠️ Tập bị thiếu:</b> ${missing.join(', ')}`;
-                c.appendChild(warn);
-            }
+            if (c) c.innerHTML += `<br><b>${msg}</b>`;
         }
 
         setupMonitoring();
         scrollToCurrentInPlaylist();
 
-        if (State.voiceEnabled) initVoiceControl();
-        if (State.audioMode)   enableAudioMode();
-        if (State.pipEnabled)  enableAutoPiP();
+        // Kích hoạt các chế độ theo toggle
+        if (voiceEnabled) { if (typeof startVoiceControl === 'function') startVoiceControl(); }
+        if (audioMode) { if (typeof enableAudioMode === 'function') enableAudioMode(); }
+        if (pipEnabled) { if (typeof enableAutoPiP === 'function') enableAutoPiP(); }
     }
-
-    // ── Navigation: fix race condition với pending flag ──
-    let _navigatePending = false;
 
     function onNavigate() {
         if (location.pathname !== '/watch') return;
         const vid = new URLSearchParams(location.search).get('v');
-        if (vid === State.lastVid || _navigatePending) return;
-
-        _navigatePending = true;
+        if (vid === lastVid) return;
         setTimeout(() => {
-            _navigatePending = false;
-            const currentVid = new URLSearchParams(location.search).get('v');
-            if (currentVid !== vid) return; // đã navigate tiếp rồi
-            State.lastVid = currentVid;
+            if (new URLSearchParams(location.search).get('v') !== vid) return;
+            lastVid = vid;
             main();
         }, 800);
     }
 
-    // ── Bootstrap ──
     setupProfiles();
     setupKeyboardShortcuts();
 
@@ -206,11 +173,9 @@
     }
     document.addEventListener('yt-navigate-finish', onNavigate);
 
-    if (State.marathon) { document.body.classList.add('vtv-marathon'); startAdBlocking(); }
-
+    if (marathon) { document.body.classList.add('vtv-marathon'); startAdBlocking(); }
     window.addEventListener('beforeunload', () => {
-        stopWatchTimer();   // flush watch time trước khi rời trang
         stopAdBlocking();
-        stopVoiceControl();
+        if (voiceRecognition) voiceRecognition.stop();
     });
 })();

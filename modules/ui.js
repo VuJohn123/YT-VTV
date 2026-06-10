@@ -275,6 +275,26 @@ function doRedirect() {
     }
 }
 
+function renderOutOfOrder(current, expected, expectedUrl) {
+    setTitle('⚠️ Sai thứ tự tập');
+    setBody(`
+        <div class="message">Bạn đang xem tập ${current}, tập tiếp theo nên là tập ${expected}.</div>
+        <div class="buttons">
+            <button id="vtv-go">Đến tập ${expected}</button>
+            <button id="vtv-stay" class="secondary">Ở lại</button>
+        </div>
+        <div id="vtv-panel-content"></div>
+    `);
+    addToggles('vtv-panel-content');
+    document.getElementById('vtv-go')?.addEventListener('click', () => {
+        if (expectedUrl) window.location.href = expectedUrl;
+    });
+    document.getElementById('vtv-stay')?.addEventListener('click', () => {
+        clearSeries(seriesKey);
+        main();
+    });
+}
+
 function startCountdown(sec) {
     if (!State.autoPlay || !State.nextUrl || State.adVideoDetected) return;
     log('Countdown:', sec);

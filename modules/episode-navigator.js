@@ -1,152 +1,157 @@
-// episode-navigator.js - Tìm tập tiếp theo, trước đó, danh sách phân đoạn
-
+// episode-navigator.js - Tìm tập tiếp theo, trước đó, danh sách (ưu tiên seg 1, suy luận thiếu)
 const MAX_EPISODES_IN_LIST = 10;
-const VISIBLE_EPISODES = 4;
-
-// ── Helper dùng chung: tìm với channel prefix, fallback không prefix ──
-async function _searchWithFallback(title, filterFn, channel) {
-    const withCh = (INCLUDE_CHANNEL_IN_SEARCH && channel) ? `${title} ${channel}` : title;
-    let results = await searchYT(withCh);
-    let found   = results.filter(filterFn);
-    if (found.length) return found;
-
-    // Fallback: bỏ channel trong query nếu chưa thử
-    if (INCLUDE_CHANNEL_IN_SEARCH && channel) {
-        results = await searchYT(title);
-        found   = results.filter(filterFn);
-    }
-    return found;
-}
-
-function _makeFilter(series, episode, season, segmentCheck) {
-    return (v) => {
-        const p = parseTitle(v.title);
-        if (!p || p.series !== series || p.episode !== episode) return false;
-        if (season ? p.season !== season : p.season) return false;
-        return segmentCheck ? segmentCheck(p) : true;
-    };
-}
 
 async function findNext(info, channel) {
-    const { series, episode, season, segment, totalSeg } = info;
-    const total    = totalSeg || 1;
-    const partStr  = season ? ` - P${season}` : '';
+    const mk = (exact) => (INCLUDE_CHANNEL_IN_SEARCH && channel) ? `${exact} ${channel}` : exact;
+    const partStr = info.season ? ` - P${info.season}` : '';
 
-    // ── Còn phân đoạn trong tập hiện tại ──
-    if (segment && total > 1 && segment < total) {
-        const nextSeg  = segment + 1;
-        const segTitle = `${series} tập ${episode}${partStr} (${nextSeg}/${total})`;
-        const found    = await _searchWithFallback(
-            segTitle,
-            v => parseTitle(v.title)?.segment === nextSeg && parseTitle(v.title)?.totalSeg === total,
-            channel
-        );
-        if (found.length) return { url: `https://youtu.be/${found[0].videoId}`, title: found[0].title, source: 'segment' };
+    // 1. Nếu còn phân đoạn trong cùng tập → tìm segment tiếp theo
+    if (info.segment && info.totalSeg && info.segment < info.totalSeg) {
+        const segTitle = `${info.series} tập ${info.episode}${partStr} (${info.segment + 1}/${info.totalSeg})`;
+        let r = await searchYT(mk(segTitle));
+        let v = r.filter(v => v.title.includes(`(${info.segment + 1}/${info.totalSeg})`));
+        if (v.length) return {url: `https://youtu.be/${v[0].videoId}`, title: v[0].title, source:'segment'};
+        if (channel) {
+            r = await searchYT(segTitle);
+            v = r.filter(v => v.title.includes(`(${info.segment + 1}/${info.totalSeg})`));
+            if (v.length) return {url: `https://youtu.be/${v[0].videoId}`, title: v[0].title, source:'segment'};
+        }
         return null;
     }
 
-    // ── Tìm tập kế tiếp ──
-    const nextEp  = episode + 1;
-    const segCheck = (total > 1) ? (p => p.segment === 1 && p.totalSeg === total) : null;
-    const exactTitle = (total > 1)
-        ? `${series} tập ${nextEp}${partStr} (1/${total})`
-        : `${series} tập ${nextEp}${partStr}`;
+    // 2. Tìm tập tiếp theo, ưu tiên phân đoạn nhỏ nhất (segment 1 nếu có)
+    const nextEp = info.episode + 1;
+    const baseTitle = `${info.series} tập ${nextEp}${partStr}`;
+    let r = await searchYT(mk(baseTitle));
+    if (channel && r.length === 0) r = await searchYT(baseTitle); // fallback không kênh
 
-    const filter = _makeFilter(series, nextEp, season, segCheck);
-    let found = await _searchWithFallback(exactTitle, filter, channel);
-    if (found.length) return { url: `https://youtu.be/${found[0].videoId}`, title: found[0].title, source: 'episode' };
+    let candidates = r.filter(v => {
+        const p = parseTitle(v.title);
+        return p && p.series === info.series && p.episode === nextEp && (info.season ? p.season === info.season : !p.season);
+    });
 
-    // Fallback không phân đoạn (video có thể chưa chia đoạn)
-    if (total > 1) {
-        const fallbackTitle = `${series} tập ${nextEp}${partStr}`;
-        const fallbackFilter = _makeFilter(series, nextEp, season, null);
-        found = await _searchWithFallback(fallbackTitle, fallbackFilter, channel);
-        if (found.length) return { url: `https://youtu.be/${found[0].videoId}`, title: found[0].title, source: 'episode_fallback' };
-    }
-
-    // Cross-season
-    if (season) {
-        const ns = season + 1;
-        const ctTitle = `${series} tập 1 - P${ns}${total > 1 ? ' (1/' + total + ')' : ''}`;
-        found = await _searchWithFallback(ctTitle, v => parseTitle(v.title)?.season === ns, channel);
-        if (found.length) return { url: `https://youtu.be/${found[0].videoId}`, title: found[0].title, source: 'newseason' };
-    }
-
-    return null;
-}
-
-async function findPrevious(info, channel) {
-    const { series, episode, season, totalSeg } = info;
-    const prevEp  = episode - 1;
-    if (prevEp < 1) return null;
-
-    const total   = totalSeg || 1;
-    const partStr = season ? ` - P${season}` : '';
-
-    // Tìm phân đoạn cuối của tập trước — nhưng KHÔNG giả định totalSeg bằng nhau
-    // Thử từ phân đoạn cao xuống, hoặc thẳng tập không phân đoạn
-    if (total > 1) {
-        // Thử tìm segment = total (giả định cùng structure), nếu miss thì fallback
-        for (const seg of [total, total - 1, 1]) {
-            const t = `${series} tập ${prevEp}${partStr} (${seg}/${total})`;
-            const f = _makeFilter(series, prevEp, season, p => p.segment === seg);
-            const found = await _searchWithFallback(t, f, channel);
-            if (found.length) return { url: `https://youtu.be/${found[0].videoId}`, title: found[0].title, episode: prevEp };
+    // Nếu không có ứng viên, thử suy luận từ danh sách tập đã biết (ví dụ: thiếu segment)
+    if (candidates.length === 0 && episodeList.length > 0) {
+        const missing = suggestMissingSegments(episodeList);
+        const nextMissing = missing.find(m => m.episode === nextEp && m.segment === 1);
+        if (nextMissing) {
+            const guessTitle = `${info.series} tập ${nextEp}${partStr} (1/${nextMissing.totalSeg})`;
+            r = await searchYT(mk(guessTitle));
+            candidates = r.filter(v => {
+                const p = parseTitle(v.title);
+                return p && p.series === info.series && p.episode === nextEp;
+            });
+            if (candidates.length === 0 && channel) {
+                r = await searchYT(guessTitle);
+                candidates = r.filter(v => {
+                    const p = parseTitle(v.title);
+                    return p && p.series === info.series && p.episode === nextEp;
+                });
+            }
         }
     }
 
-    // Fallback: tập không phân đoạn hoặc bất kỳ segment nào
-    const fallbackTitle  = `${series} tập ${prevEp}${partStr}`;
-    const fallbackFilter = _makeFilter(series, prevEp, season, null);
-    const found = await _searchWithFallback(fallbackTitle, fallbackFilter, channel);
-    if (found.length) return { url: `https://youtu.be/${found[0].videoId}`, title: found[0].title, episode: prevEp };
+    if (candidates.length === 0) {
+        // Cross-season
+        if (info.season) {
+            const ns = info.season + 1;
+            const ct = `${info.series} tập 1 - P${ns} (1/${info.totalSeg || 1})`;
+            r = await searchYT(mk(ct));
+            const cv = r.filter(v => parseTitle(v.title)?.season === ns);
+            if (cv.length) return {url: `https://youtu.be/${cv[0].videoId}`, title: cv[0].title, source:'newseason'};
+        }
+        return null;
+    }
 
-    return null;
+    // Sắp xếp theo segment tăng dần, ưu tiên segment 1
+    candidates.sort((a, b) => {
+        const pa = parseTitle(a.title);
+        const pb = parseTitle(b.title);
+        return (pa?.segment || 0) - (pb?.segment || 0);
+    });
+
+    const chosen = candidates[0];
+    return {url: `https://youtu.be/${chosen.videoId}`, title: chosen.title, source:'episode'};
+}
+
+async function findPrevious(info, channel) {
+    const mk = (exact) => (INCLUDE_CHANNEL_IN_SEARCH && channel) ? `${exact} ${channel}` : exact;
+    const pe = info.episode - 1;
+    if (pe < 1) return null;
+    const partStr = info.season ? ` - P${info.season}` : '';
+    const baseTitle = `${info.series} tập ${pe}${partStr}`;
+    let r = await searchYT(mk(baseTitle));
+    if (channel && r.length === 0) r = await searchYT(baseTitle);
+    const candidates = r.filter(v => {
+        const p = parseTitle(v.title);
+        return p && p.series === info.series && p.episode === pe && (info.season ? p.season === info.season : !p.season);
+    });
+    if (candidates.length === 0) return null;
+    // Lấy segment lớn nhất (cuối cùng của tập trước)
+    candidates.sort((a, b) => {
+        const pa = parseTitle(a.title);
+        const pb = parseTitle(b.title);
+        return (pb?.segment || 0) - (pa?.segment || 0);
+    });
+    const chosen = candidates[0];
+    return {url: `https://youtu.be/${chosen.videoId}`, title: chosen.title, episode: pe};
 }
 
 async function findEpisodeList(info, channel) {
-    const { series, episode, season, totalSeg } = info;
-    const total   = totalSeg || 1;
-    const partStr = season ? ` - P${season}` : '';
-    const list    = [];
+    const list = [];
+    const mk = (exact) => (INCLUDE_CHANNEL_IN_SEARCH && channel) ? `${exact} ${channel}` : exact;
+    const ce = info.episode;
+    const partStr = info.season ? ` - P${info.season}` : '';
 
-    // Thêm video hiện tại
-    const currentTitle = document.querySelector('h1.ytd-watch-metadata yt-formatted-string')?.textContent?.trim() || `Tập ${episode}`;
-    list.push({ episode, url: location.href, title: currentTitle, isCurrent: true, segment: info.segment || 0, totalSeg: total });
+    const currentTitle = document.querySelector('h1.ytd-watch-metadata yt-formatted-string')?.textContent?.trim() || `Tập ${ce}`;
+    list.push({
+        episode: ce,
+        url: location.href,
+        title: currentTitle,
+        isCurrent: true,
+        segment: info.segment || 0,
+        totalSeg: info.totalSeg || 1
+    });
 
-    const startEp = Math.max(1, episode - 2);
-    const endEp   = episode + MAX_EPISODES_IN_LIST - 3;
+    const startEp = Math.max(1, ce - 2);
+    const endEp = ce + MAX_EPISODES_IN_LIST - 3;
 
     for (let ep = startEp; ep <= endEp; ep++) {
-        if (ep === episode) continue;
-        const baseTitle = `${series} tập ${ep}${partStr}`;
-        const results   = await searchYT(
-            (INCLUDE_CHANNEL_IN_SEARCH && channel) ? `${baseTitle} ${channel}` : baseTitle
-        );
-        for (const vid of results) {
+        if (ep === ce) continue;
+        const baseTitle = `${info.series} tập ${ep}${partStr}`;
+        const results = await searchYT(mk(baseTitle));
+        const valid = results.filter(v => {
+            const p = parseTitle(v.title);
+            return p && p.series === info.series && p.episode === ep && (info.season ? p.season === info.season : !p.season);
+        });
+        for (const vid of valid) {
             const p = parseTitle(vid.title);
-            if (!p || p.series !== series || p.episode !== ep) continue;
-            if (season ? p.season !== season : p.season) continue;
             list.push({
                 episode: ep,
                 url: `https://youtu.be/${vid.videoId}`,
                 title: vid.title,
                 isCurrent: false,
                 segment: p.segment || 0,
-                totalSeg: p.totalSeg || 1,
+                totalSeg: p.totalSeg || 1
             });
         }
     }
 
-    // Sắp xếp và dedup
-    list.sort((a, b) => a.episode !== b.episode ? a.episode - b.episode : (a.segment || 0) - (b.segment || 0));
-    const seen   = new Set();
+    list.sort((a, b) => {
+        if (a.episode !== b.episode) return a.episode - b.episode;
+        return (a.segment || 0) - (b.segment || 0);
+    });
+
+    const seen = new Set();
     const unique = [];
     for (const item of list) {
         const key = `${item.episode}_${item.segment || 0}`;
-        if (!seen.has(key)) { seen.add(key); unique.push(item); }
+        if (!seen.has(key)) {
+            seen.add(key);
+            unique.push(item);
+        }
     }
 
-    log(`Episode list: ${unique.length} items (range ${startEp}-${endEp})`);
+    log(`Episode list: ${unique.length} episodes (range ${startEp}-${endEp})`);
     return unique;
 }
