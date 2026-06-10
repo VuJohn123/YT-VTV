@@ -1,4 +1,5 @@
-// ui.js - Giao diện panel, movable, countdown, monitoring, toggle mở rộng
+// ui.js - Giao diện panel, movable, countdown, monitoring, toggle
+
 GM_addStyle(`
     #vtv-ult-panel {
         position: fixed; bottom: 20px; right: 20px;
@@ -49,16 +50,10 @@ GM_addStyle(`
     #vtv-ult-panel button:hover { background: #1c8adb; }
     #vtv-ult-panel button.secondary { background: #444; }
     #vtv-ult-panel button.back-btn { background: #cc3333; }
-    #vtv-ult-panel .countdown {
-        font-size: 13px; color: #ffcc00; margin-left: 8px;
-    }
-    #vtv-ult-panel .auto-toggle,
-    #vtv-ult-panel .marathon-toggle,
-    #vtv-ult-panel .autoskip-toggle,
-    #vtv-ult-panel .voice-toggle,
-    #vtv-ult-panel .audio-toggle,
-    #vtv-ult-panel .pip-toggle {
-        display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: #aaa;
+    #vtv-ult-panel .countdown { font-size: 13px; color: #ffcc00; margin-left: 8px; }
+    #vtv-ult-panel .toggle-row {
+        display: flex; align-items: center; gap: 6px;
+        margin-top: 6px; font-size: 12px; color: #aaa;
     }
     #vtv-ult-panel input[type="text"] {
         width: 100%; padding: 6px 8px; border-radius: 8px; border: none;
@@ -72,74 +67,74 @@ GM_addStyle(`
         color: #3ea6ff; text-decoration: none; font-size: 12px;
         display: block; padding: 4px 8px; border-radius: 4px;
     }
-    #vtv-ult-panel .episode-list a:hover { background: #444; text-decoration: none; }
-    #vtv-ult-panel .episode-list a.current {
-        background: #555; color: #fff; font-weight: bold;
-    }
+    #vtv-ult-panel .episode-list a:hover { background: #444; }
+    #vtv-ult-panel .episode-list a.current { background: #555; color: #fff; font-weight: bold; }
     .vtv-pip-active #movie_player {
         position: fixed; bottom: 20px; left: 20px; width: 300px; height: 169px; z-index: 10000;
     }
 `);
 
+// ── DOM helpers (tránh innerHTML string cho event-binding UI) ──
+function _el(tag, props = {}, children = []) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) {
+        if (k === 'cls')       el.className = v;
+        else if (k === 'text') el.textContent = v;
+        else if (k === 'html') el.innerHTML = v;  // chỉ dùng khi nội dung đã escape
+        else                   el.setAttribute(k, v);
+    }
+    for (const ch of children) { if (ch) el.appendChild(ch); }
+    return el;
+}
+function _btn(text, cls, onClick) {
+    const b = _el('button', { text, cls });
+    b.addEventListener('click', onClick);
+    return b;
+}
+
 function createPanel() {
     log('Creating panel...');
-    const el = document.createElement('div');
-    el.id = 'vtv-ult-panel';
-    const hd = document.createElement('div');
-    hd.id = 'vtv-ult-header';
-    hd.innerHTML = `
-        <span class="title">VTV Ult</span>
-        <div>
-            <button id="vtv-collapse-btn" title="Thu gọn">–</button>
-            <button id="vtv-close-btn" title="Đóng">✕</button>
-        </div>
-    `;
-    el.appendChild(hd);
-    const bd = document.createElement('div');
-    bd.id = 'vtv-ult-body';
-    el.appendChild(bd);
-    document.body.appendChild(el);
-    panel = el;
 
-    const mini = document.createElement('button');
-    mini.id = 'vtv-ult-mini-btn';
-    mini.textContent = '▶';
-    mini.title = 'Hiện bảng điều khiển';
+    const titleSpan  = _el('span', { cls: 'title', text: 'VTV Ult' });
+    const collapseBtn = _el('button', { title: 'Thu gọn', text: '–' });
+    const closeBtn    = _el('button', { title: 'Đóng',    text: '✕' });
+    const header = _el('div', { id: 'vtv-ult-header' }, [titleSpan, _el('div', {}, [collapseBtn, closeBtn])]);
+    const body   = _el('div', { id: 'vtv-ult-body' });
+    const panel  = _el('div', { id: 'vtv-ult-panel' }, [header, body]);
+
+    const mini = _el('button', { id: 'vtv-ult-mini-btn', title: 'Hiện bảng điều khiển', text: '▶' });
+
+    document.body.appendChild(panel);
     document.body.appendChild(mini);
+    State.panel = panel;
 
-    document.getElementById('vtv-collapse-btn').addEventListener('click', () => {
+    collapseBtn.addEventListener('click', () => {
         panel.classList.toggle('collapsed');
-        uiCollapsed = panel.classList.contains('collapsed');
-        GM_setValue('vtvUlt_collapsed', uiCollapsed);
-        document.getElementById('vtv-collapse-btn').textContent = uiCollapsed ? '+' : '–';
-        log('Panel collapsed:', uiCollapsed);
+        State.uiCollapsed = panel.classList.contains('collapsed');
+        GM_setValue('vtvUlt_collapsed', State.uiCollapsed);
+        collapseBtn.textContent = State.uiCollapsed ? '+' : '–';
     });
-    document.getElementById('vtv-close-btn').addEventListener('click', () => {
+    closeBtn.addEventListener('click', () => {
         panel.classList.add('hidden');
-        uiHidden = true;
+        State.uiHidden = true;
         GM_setValue('vtvUlt_hidden', true);
         mini.style.display = 'flex';
-        log('Panel hidden');
     });
     mini.addEventListener('click', () => {
         panel.classList.remove('hidden');
-        uiHidden = false;
+        State.uiHidden = false;
         GM_setValue('vtvUlt_hidden', false);
         mini.style.display = 'none';
-        log('Panel shown');
     });
 
-    if (uiCollapsed) panel.classList.add('collapsed');
-    if (uiHidden) {
-        panel.classList.add('hidden');
-        mini.style.display = 'flex';
-    }
+    if (State.uiCollapsed) panel.classList.add('collapsed');
+    if (State.uiHidden)  { panel.classList.add('hidden'); mini.style.display = 'flex'; }
 
-    makePanelMovable(hd);
-    if (panelPos) {
-        panel.style.left = panelPos.left + 'px';
-        panel.style.top = panelPos.top + 'px';
-        panel.style.right = 'auto';
+    makePanelMovable(header);
+    if (State.panelPos) {
+        panel.style.left   = State.panelPos.left + 'px';
+        panel.style.top    = State.panelPos.top  + 'px';
+        panel.style.right  = 'auto';
         panel.style.bottom = 'auto';
     }
     snapPanelToViewport();
@@ -147,138 +142,82 @@ function createPanel() {
 }
 
 function makePanelMovable(header) {
-    let isDragging = false, sx, sy, il, it;
+    let dragging = false, sx, sy, il, it;
     header.addEventListener('mousedown', e => {
-        isDragging = true;
-        sx = e.clientX;
-        sy = e.clientY;
-        const r = panel.getBoundingClientRect();
-        il = r.left;
-        it = r.top;
+        dragging = true; sx = e.clientX; sy = e.clientY;
+        const r = State.panel.getBoundingClientRect();
+        il = r.left; it = r.top;
         e.preventDefault();
     });
     document.addEventListener('mousemove', e => {
-        if (!isDragging) return;
-        panel.style.left = (il + e.clientX - sx) + 'px';
-        panel.style.top = (it + e.clientY - sy) + 'px';
-        panel.style.right = 'auto';
-        panel.style.bottom = 'auto';
+        if (!dragging) return;
+        State.panel.style.left   = (il + e.clientX - sx) + 'px';
+        State.panel.style.top    = (it + e.clientY - sy) + 'px';
+        State.panel.style.right  = 'auto';
+        State.panel.style.bottom = 'auto';
     });
     document.addEventListener('mouseup', () => {
-        if (isDragging) {
-            isDragging = false;
-            snapPanelToViewport();
-            const r = panel.getBoundingClientRect();
-            GM_setValue('vtvUlt_panelPos', { left: r.left, top: r.top });
-            log('Panel moved to:', r.left, r.top);
-        }
-    });
-    if (panelPos) {
-        panel.style.left = panelPos.left + 'px';
-        panel.style.top = panelPos.top + 'px';
-        panel.style.right = 'auto';
-        panel.style.bottom = 'auto';
+        if (!dragging) return;
+        dragging = false;
         snapPanelToViewport();
-    }
+        const r = State.panel.getBoundingClientRect();
+        GM_setValue('vtvUlt_panelPos', { left: r.left, top: r.top });
+    });
 }
 
 function snapPanelToViewport() {
-    const r = panel.getBoundingClientRect();
+    const p = State.panel;
+    if (!p) return;
+    const r      = p.getBoundingClientRect();
     const margin = 20;
-    let newLeft = r.left, newTop = r.top;
-    const maxLeft = window.innerWidth - r.width - margin;
-    const maxTop = window.innerHeight - r.height - margin;
-    if (newLeft < margin) newLeft = margin;
-    if (newTop < margin) newTop = margin;
-    if (newLeft > maxLeft) newLeft = maxLeft;
-    if (newTop > maxTop) newTop = maxTop;
-    if (newLeft !== r.left || newTop !== r.top) {
-        panel.style.left = newLeft + 'px';
-        panel.style.top = newTop + 'px';
-        log('Panel snapped to:', newLeft, newTop);
-    }
+    let l = Math.max(margin, Math.min(r.left, window.innerWidth  - r.width  - margin));
+    let t = Math.max(margin, Math.min(r.top,  window.innerHeight - r.height - margin));
+    if (l !== r.left || t !== r.top) { p.style.left = l + 'px'; p.style.top = t + 'px'; }
 }
 
 function setBody(html) {
     const b = document.getElementById('vtv-ult-body');
     if (b) b.innerHTML = html;
-    log('Panel body updated');
 }
 function setTitle(text) {
     const t = document.querySelector('#vtv-ult-header .title');
     if (t) t.textContent = text;
 }
 
-function addToggles(cid) {
-    const c = document.getElementById(cid);
+// ── Toggles: dùng array config thay vì lặp thủ công ──
+const TOGGLE_CONFIG = [
+    { id: 'vtv-auto',       label: 'Tự động chuyển', stateKey: 'autoPlay',    gmKey: 'vtvUlt_auto',
+      on: null, off: null },
+    { id: 'vtv-marathon',   label: 'Marathon',        stateKey: 'marathon',   gmKey: 'vtvUlt_marathon',
+      on: () => { document.body.classList.add('vtv-marathon');    startAdBlocking(); },
+      off: () => { document.body.classList.remove('vtv-marathon'); stopAdBlocking(); } },
+    { id: 'vtv-autoskip',   label: 'Tự động tua intro', stateKey: 'autoSkip', gmKey: 'vtvUlt_autoskip',
+      on: null, off: null },
+    { id: 'vtv-voice',      label: 'Voice Control 🎤', stateKey: 'voiceEnabled', gmKey: 'vtvUlt_voice',
+      on: initVoiceControl, off: stopVoiceControl },
+    { id: 'vtv-audio-mode', label: 'Audio Mode 🔇',    stateKey: 'audioMode',  gmKey: 'vtvUlt_audioMode',
+      on: enableAudioMode, off: disableAudioMode },
+    { id: 'vtv-pip',        label: 'Auto PiP 🖼️',     stateKey: 'pipEnabled', gmKey: 'vtvUlt_pip',
+      on: enableAutoPiP,   off: disableAutoPiP },
+];
+
+function addToggles(containerId) {
+    const c = document.getElementById(containerId);
     if (!c) return;
-    // Các toggle hiện có: auto, marathon, autoskip
-    // Thêm voice, audio, pip
-    c.innerHTML += `
-        <div class="auto-toggle"><label><input type="checkbox" id="vtv-auto" ${autoPlay ? 'checked' : ''}> Tự động chuyển</label></div>
-        <div class="marathon-toggle"><label><input type="checkbox" id="vtv-marathon" ${marathon ? 'checked' : ''}> Marathon</label></div>
-        <div class="autoskip-toggle"><label><input type="checkbox" id="vtv-autoskip" ${autoSkip ? 'checked' : ''}> Tự động tua intro</label></div>
-        <div class="voice-toggle"><label><input type="checkbox" id="vtv-voice" ${voiceEnabled ? 'checked' : ''}> Voice Control 🎤</label></div>
-        <div class="audio-toggle"><label><input type="checkbox" id="vtv-audio-mode" ${audioMode ? 'checked' : ''}> Audio Mode 🔇</label></div>
-        <div class="pip-toggle"><label><input type="checkbox" id="vtv-pip" ${pipEnabled ? 'checked' : ''}> Auto PiP 🖼️</label></div>
-    `;
-    document.getElementById('vtv-auto')?.addEventListener('change', e => {
-        autoPlay = e.target.checked;
-        GM_setValue('vtvUlt_auto', autoPlay);
-        log('Auto play:', autoPlay);
-    });
-    document.getElementById('vtv-marathon')?.addEventListener('change', e => {
-        marathon = e.target.checked;
-        GM_setValue('vtvUlt_marathon', marathon);
-        log('Marathon:', marathon);
-        if (marathon) {
-            document.body.classList.add('vtv-marathon');
-            if (typeof startAdBlocking === 'function') startAdBlocking();
-        } else {
-            document.body.classList.remove('vtv-marathon');
-            if (typeof stopAdBlocking === 'function') stopAdBlocking();
-        }
-    });
-    document.getElementById('vtv-autoskip')?.addEventListener('change', e => {
-        autoSkip = e.target.checked;
-        GM_setValue('vtvUlt_autoskip', autoSkip);
-        log('Auto skip:', autoSkip);
-    });
-    document.getElementById('vtv-voice')?.addEventListener('change', e => {
-        voiceEnabled = e.target.checked;
-        GM_setValue('vtvUlt_voice', voiceEnabled);
-        if (voiceEnabled) {
-            if (typeof startVoiceControl === 'function') startVoiceControl();
-        } else {
-            if (typeof stopVoiceControl === 'function') stopVoiceControl();
-        }
-        log('Voice control:', voiceEnabled);
-    });
-    document.getElementById('vtv-audio-mode')?.addEventListener('change', e => {
-        audioMode = e.target.checked;
-        GM_setValue('vtvUlt_audioMode', audioMode);
-        if (audioMode) {
-            if (typeof enableAudioMode === 'function') enableAudioMode();
-        } else {
-            if (typeof disableAudioMode === 'function') disableAudioMode();
-        }
-        log('Audio mode:', audioMode);
-    });
-    document.getElementById('vtv-pip')?.addEventListener('change', e => {
-        pipEnabled = e.target.checked;
-        GM_setValue('vtvUlt_pip', pipEnabled);
-        if (pipEnabled) {
-            if (typeof enableAutoPiP === 'function') enableAutoPiP();
-        } else {
-            if (typeof disableAutoPiP === 'function') disableAutoPiP();
-        }
-        log('Auto PiP:', pipEnabled);
-    });
-    // Kích hoạt marathon nếu đang bật
-    if (marathon) {
-        document.body.classList.add('vtv-marathon');
-        if (typeof startAdBlocking === 'function') startAdBlocking();
+    for (const cfg of TOGGLE_CONFIG) {
+        const cb  = _el('input', { type: 'checkbox', id: cfg.id });
+        cb.checked = State[cfg.stateKey];
+        const row = _el('div', { cls: 'toggle-row' }, [_el('label', {}, [cb, document.createTextNode(' ' + cfg.label)])]);
+        c.appendChild(row);
+        cb.addEventListener('change', e => {
+            State[cfg.stateKey] = e.target.checked;
+            GM_setValue(cfg.gmKey, e.target.checked);
+            if (e.target.checked) { cfg.on?.(); }
+            else                  { cfg.off?.(); }
+        });
     }
+    // Sync marathon adblock state on render
+    if (State.marathon) { document.body.classList.add('vtv-marathon'); startAdBlocking(); }
 }
 
 function renderSearching() {
@@ -289,130 +228,123 @@ function renderSearching() {
 
 function renderFound(title, url, source) {
     setTitle('▶️ Điều hướng');
-    let html = `
+    setBody(`
         ${source === 'newseason' ? '<div class="message">🔁 Phần mới!</div>' : ''}
         <div class="buttons">
-            ${previousEp ? '<button id="vtv-prev" class="back-btn">◀ Quay lại</button>' : ''}
-            ${url ? '<button id="vtv-skip">⏭ Tiếp theo</button>' : ''}
+            ${State.previousEp ? '<button id="vtv-prev" class="back-btn">◀ Quay lại</button>' : ''}
+            ${url             ? '<button id="vtv-skip">⏭ Tiếp theo</button>'                 : ''}
             <button id="vtv-cancel" class="secondary" style="display:none;">❌ Huỷ</button>
             <span class="countdown" id="vtv-cd"></span>
         </div>
         <div class="next-title">${escapeHTML(title)}</div>
         <div id="episode-list-container"></div>
         <div id="vtv-panel-content"></div>
-    `;
-    setBody(html);
-    if (previousEp) {
-        document.getElementById('vtv-prev')?.addEventListener('click', () => {
-            if (previousEp.url) window.location.href = previousEp.url;
-        });
-    }
-    document.getElementById('vtv-skip')?.addEventListener('click', () => {
-        if (url) window.location.href = url;
-    });
+    `);
+
+    if (State.previousEp) document.getElementById('vtv-prev')?.addEventListener('click', () => { window.location.href = State.previousEp.url; });
+    document.getElementById('vtv-skip')?.addEventListener('click',   () => { if (url) window.location.href = url; });
     document.getElementById('vtv-cancel')?.addEventListener('click', cancelRedirect);
     addToggles('vtv-panel-content');
-    if (episodeList.length) {
+
+    if (State.episodeList.length) {
         const ec = document.getElementById('episode-list-container');
-        ec.innerHTML = '<ul class="episode-list">' + episodeList.map(e =>
-            `<li><a href="${e.url}" class="${e.isCurrent ? 'current' : ''}">${e.isCurrent ? '📌' : '📺'} ${escapeHTML(e.title)}</a></li>`
-        ).join('') + '</ul>';
+        if (ec) {
+            const ul = _el('ul', { cls: 'episode-list' });
+            for (const ep of State.episodeList) {
+                const a  = _el('a', { href: ep.url, cls: ep.isCurrent ? 'current' : '', text: (ep.isCurrent ? '📌 ' : '📺 ') + ep.title });
+                ul.appendChild(_el('li', {}, [a]));
+            }
+            ec.appendChild(ul);
+        }
     }
 }
 
 function cancelRedirect() {
     log('Cancel redirect');
-    redirectScheduled = false;
-    if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
-    if (panel) {
-        document.getElementById('vtv-cancel')?.style.setProperty('display', 'none');
-        const cd = document.getElementById('vtv-cd');
-        if (cd) cd.textContent = '';
-    }
+    State.redirectScheduled = false;
+    if (State.countdownInterval) { clearInterval(State.countdownInterval); State.countdownInterval = null; }
+    const cd = document.getElementById('vtv-cd');
+    if (cd) cd.textContent = '';
+    document.getElementById('vtv-cancel')?.style.setProperty('display', 'none');
 }
 
 function doRedirect() {
-    if (nextUrl && !adVideoDetected) {
-        log('Redirecting to:', nextUrl);
-        window.location.href = nextUrl;
+    if (State.nextUrl && !State.adVideoDetected) {
+        log('Redirecting to:', State.nextUrl);
+        window.location.href = State.nextUrl;
     }
 }
 
 function startCountdown(sec) {
-    if (!autoPlay || !nextUrl || adVideoDetected) return;
-    log('Countdown started:', sec);
-    redirectScheduled = true;
+    if (!State.autoPlay || !State.nextUrl || State.adVideoDetected) return;
+    log('Countdown:', sec);
+    State.redirectScheduled = true;
     const cd = document.getElementById('vtv-cd');
     if (cd) cd.textContent = `⏳ ${sec}s`;
-    document.getElementById('vtv-cancel').style.display = 'inline-block';
-    if (countdownInterval) clearInterval(countdownInterval);
+    document.getElementById('vtv-cancel')?.style.setProperty('display', 'inline-block');
+    if (State.countdownInterval) clearInterval(State.countdownInterval);
     let rem = sec;
-    countdownInterval = setInterval(() => {
+    State.countdownInterval = setInterval(() => {
         rem--;
-        if (rem <= 0) {
-            clearInterval(countdownInterval);
-            doRedirect();
-        } else if (cd) {
-            cd.textContent = `⏳ ${rem}s`;
-        }
+        if (rem <= 0) { clearInterval(State.countdownInterval); doRedirect(); }
+        else if (cd)  { cd.textContent = `⏳ ${rem}s`; }
     }, 1000);
 }
 
 function setupMonitoring() {
     log('Setting up monitoring');
-    if (videoEl) {
-        videoEl.removeEventListener('ended', onVideoEnded);
-        videoEl.removeEventListener('seeked', onSeeked);
+    if (State.videoEl) {
+        State.videoEl.removeEventListener('ended', onVideoEnded);
+        State.videoEl.removeEventListener('seeked', onSeeked);
     }
-    videoEl = document.querySelector('video.html5-main-video');
-    if (!videoEl) {
-        log('Video element not found, retrying...');
-        setTimeout(setupMonitoring, 1000);
-        return;
-    }
-    if (timeCheckInterval) clearInterval(timeCheckInterval);
-    vtvLastTime = videoEl.currentTime;
-    if (seriesKey && autoSkip) setTimeout(() => applyAutoSkip(seriesKey), 2000);
+    State.videoEl = document.querySelector('video.html5-main-video');
+    if (!State.videoEl) { setTimeout(setupMonitoring, 1000); return; }
+
+    if (State.timeCheckInterval) clearInterval(State.timeCheckInterval);
+    State.vtvLastTime = State.videoEl.currentTime;
+    if (State.seriesKey && State.autoSkip) setTimeout(() => applyAutoSkip(State.seriesKey), 2000);
 
     const checkAd = () => {
-        if (videoEl && videoEl.duration && videoEl.duration < AD_MAX_DURATION) {
-            adVideoDetected = true;
-            log('Ad video detected');
-            cancelRedirect();
-        } else {
-            adVideoDetected = false;
-        }
+        const dur = State.videoEl?.duration;
+        // Chỉ coi là ad nếu video ngắn VÀ không phải kênh đích
+        State.adVideoDetected = (dur > 0 && dur < AD_MAX_DURATION && State.channelName !== TARGET_CHANNEL);
+        if (State.adVideoDetected) cancelRedirect();
     };
-    videoEl.addEventListener('loadedmetadata', checkAd);
+    State.videoEl.addEventListener('loadedmetadata', checkAd);
     checkAd();
 
-    timeCheckInterval = setInterval(() => {
-        if (!videoEl || !autoPlay || !nextUrl || redirectScheduled || adVideoDetected) return;
-        const rem = videoEl.duration - videoEl.currentTime;
-        if (rem <= getAdaptiveThreshold() && rem > 0) startCountdown(Math.floor(rem));
+    State.timeCheckInterval = setInterval(() => {
+        if (!State.videoEl || !State.autoPlay || !State.nextUrl || State.redirectScheduled || State.adVideoDetected) return;
+        const rem = State.videoEl.duration - State.videoEl.currentTime;
+        if (rem > 0 && rem <= getAdaptiveThreshold()) startCountdown(Math.floor(rem));
     }, 1000);
-    videoEl.addEventListener('ended', onVideoEnded);
-    videoEl.addEventListener('seeked', onSeeked);
+
+    State.videoEl.addEventListener('ended',  onVideoEnded);
+    State.videoEl.addEventListener('seeked', onSeeked);
+
+    // Bắt đầu đo watch time
+    startWatchTimer();
 }
 
 function getAdaptiveThreshold() {
-    if (!videoEl?.duration || videoEl.duration < AD_MAX_DURATION) return 0;
-    return Math.max(5, Math.min(30, Math.floor(videoEl.duration * 0.03)));
+    const dur = State.videoEl?.duration;
+    if (!dur || dur < AD_MAX_DURATION) return 0;
+    return Math.max(5, Math.min(30, Math.floor(dur * 0.03)));
 }
 
 function onSeeked() {
-    if (!videoEl || !autoPlay || !nextUrl || redirectScheduled || adVideoDetected) return;
-    const cur = videoEl.currentTime;
-    log('Seeked from', vtvLastTime, 'to', cur);
-    if (cur > vtvLastTime + 5) learnSkip(seriesKey, vtvLastTime, cur);
-    vtvLastTime = cur;
-    const dur = videoEl.duration;
+    if (!State.videoEl || !State.autoPlay || !State.nextUrl || State.redirectScheduled || State.adVideoDetected) return;
+    const cur = State.videoEl.currentTime;
+    log('Seeked from', State.vtvLastTime, 'to', cur);
+    if (cur > State.vtvLastTime + 5) learnSkip(State.seriesKey, State.vtvLastTime, cur);
+    State.vtvLastTime = cur;
+    const dur = State.videoEl.duration;
     if (dur && (dur - cur) <= getAdaptiveThreshold() * 2) startCountdown(Math.floor(dur - cur));
 }
 
 function onVideoEnded() {
     log('Video ended');
-    if (autoPlay && nextUrl && !adVideoDetected) {
+    if (State.autoPlay && State.nextUrl && !State.adVideoDetected) {
         cancelRedirect();
         doRedirect();
     }
