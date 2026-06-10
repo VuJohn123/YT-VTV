@@ -51,7 +51,7 @@
             popupWindow.focus();
             return;
         }
-        const url = 'https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/ui-popup.html';
+        const url = '   https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/ui-popup.html';
         popupWindow = window.open(url, 'vtv_popup', 'width=400,height=600,resizable,scrollbars=no,status=no,location=no,toolbar=no,menubar=no');
         if (!popupWindow) {
             log('Popup bị chặn, hãy cho phép popup cho trang này.');
