@@ -19,7 +19,7 @@ function startAdBlocking() {
                 videoEl.currentTime = videoEl.duration - 0.1;
             } else adVideoDetected = false;
         } catch(e) {}
-    }, 200);
+    }, 2000);
 
     const hideAds = () => {
         document.querySelectorAll('ytd-display-ad-renderer,ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,ytd-promoted-sparkles-web-renderer,ytd-promoted-video-renderer,ytd-banner-promo-renderer,ytd-statement-banner-renderer,.ytp-ad-overlay-container,.ytp-ad-player-overlay,.video-ads,#player-ads,#masthead-ad,#offer-module,#premium-offer,.ytd-rich-item-renderer-promo,ytd-merch-shelf-renderer,ytd-action-companion-ad-renderer').forEach(el => { el.style.display = 'none'; });

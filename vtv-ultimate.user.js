@@ -27,6 +27,8 @@
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/virtual-playlist.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/stats.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/missing-detector.js
+// @updateURL    https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/vtv-ultimate.user.js
+// @downloadURL  https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/vtv-ultimate.user.js
 // @run-at       document-end
 // ==/UserScript==
 
