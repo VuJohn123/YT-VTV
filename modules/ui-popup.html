@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>VTV Ultimate</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 10px;
+            font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            font-size: 14px;
+            user-select: none;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            font-weight: bold;
+            color: #3ea6ff;
+        }
+        .next-title {
+            color: #3ea6ff;
+            word-break: break-word;
+            margin-bottom: 10px;
+            max-height: 60px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .buttons {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin: 10px 0;
+        }
+        button {
+            background: #3ea6ff;
+            border: none;
+            color: white;
+            padding: 5px 14px;
+            border-radius: 18px;
+            cursor: pointer;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+        button:hover { background: #1c8adb; }
+        button.secondary { background: #444; }
+        button.back-btn { background: #cc3333; }
+        .countdown {
+            font-size: 13px;
+            color: #ffcc00;
+            margin-left: 8px;
+        }
+        .toggle-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-top: 12px;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .toggle-group label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 6px 8px;
+            border-radius: 8px;
+            border: none;
+            background: #333;
+            color: white;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+        .episode-list {
+            list-style: none;
+            padding: 0;
+            margin: 10px 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .episode-list li { margin: 2px 0; }
+        .episode-list a {
+            color: #3ea6ff;
+            text-decoration: none;
+            font-size: 12px;
+            display: block;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .episode-list a:hover { background: #333; }
+        .episode-list a.current { background: #444; color: white; font-weight: bold; }
+        .message { margin-bottom: 8px; line-height: 1.4; }
+        .missing { color: #ff9800; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="header" id="title">⏳ Đang tìm...</div>
+        <div id="content"></div>
+    </div>
+
+    <script>
+        const opener = window.opener;
+        if (!opener) {
+            document.body.innerHTML = '<p style="color:red">Cửa sổ này chỉ dành cho VTV Ultimate. Hãy tải script và mở lại.</p>';
+        } else {
+            opener.postMessage({ type: 'vtv-ready' }, '*');
+        }
+
+        window.addEventListener('message', (e) => {
+            if (e.data && e.data.type === 'vtv-cmd') {
+                handleCommand(e.data.data);
+            }
+        });
+
+        function sendAction(action) {
+            if (opener) opener.postMessage({ type: 'vtv-action', data: action }, '*');
+        }
+
+        function setTitle(text) {
+            document.getElementById('title').textContent = text;
+        }
+        function setContent(html) {
+            document.getElementById('content').innerHTML = html;
+        }
+
+        function handleCommand(cmd) {
+            switch (cmd.action) {
+                case 'setTitle': setTitle(cmd.text); break;
+                case 'setBody': setContent(cmd.html); break;
+                case 'showAutoplay':
+                    setTitle('🎞️ Gợi ý YouTube');
+                    setContent(`
+                        <div class="next-title">${escapeHTML(cmd.title)}</div>
+                        <button onclick="sendAction({action:'skip'})">⏭ Xem ngay</button>
+                        ${renderToggles(cmd.toggles)}
+                    `);
+                    break;
+                case 'showFound':
+                    setTitle('▶️ Điều hướng');
+                    const prevBtn = cmd.previousEp ? `<button class="back-btn" onclick="sendAction({action:'prev'})">◀ Quay lại</button>` : '';
+                    setContent(`
+                        ${cmd.source === 'newseason' ? '<div class="message">🔁 Phần mới!</div>' : ''}
+                        <div class="buttons">
+                            ${prevBtn}
+                            <button onclick="sendAction({action:'skip'})">⏭ Tiếp theo</button>
+                            <button class="secondary" id="cancelBtn" style="display:none" onclick="sendAction({action:'cancel'})">❌ Huỷ</button>
+                            <span class="countdown" id="countdown"></span>
+                        </div>
+                        <div class="next-title">${escapeHTML(cmd.title)}</div>
+                        ${renderEpisodeList(cmd.episodeList)}
+                        ${renderToggles(cmd.toggles)}
+                    `);
+                    break;
+                case 'showNotFound':
+                    setTitle('❌ Không tìm thấy tập kế');
+                    setContent(`
+                        <input type="text" id="manualSearchInput" placeholder="Tìm tập...">
+                        <button onclick="sendAction({action:'manualSearch', query: document.getElementById('manualSearchInput').value})">Tìm</button>
+                        <div id="manualResults"></div>
+                        ${renderToggles(cmd.toggles)}
+                    `);
+                    break;
+                case 'showManualResults':
+                    const resultsDiv = document.getElementById('manualResults');
+                    if (resultsDiv) {
+                        resultsDiv.innerHTML = '<b>Kết quả:</b><ul class="episode-list">' + cmd.results.map(r => `<li><a href="https://youtu.be/${r.videoId}" target="_blank">${escapeHTML(r.title)}</a></li>`).join('') + '</ul>';
+                    }
+                    break;
+                case 'showOutOfOrder':
+                    setTitle('⚠️ Sai thứ tự tập');
+                    setContent(`
+                        <div class="message">Bạn đang xem tập ${cmd.current}, tập tiếp theo nên là tập ${cmd.expected}.</div>
+                        <div class="buttons">
+                            <button onclick="sendAction({action:'goCorrect', url:'${cmd.url}'})">Đến tập ${cmd.expected}</button>
+                            <button class="secondary" onclick="sendAction({action:'stay'})">Ở lại</button>
+                        </div>
+                    `);
+                    break;
+                case 'showMissing':
+                    let msg = '';
+                    if (cmd.missing.episodes.length) msg += '⚠️ Tập bị thiếu: ' + cmd.missing.episodes.join(', ') + '. ';
+                    if (cmd.missing.segments.length) {
+                        msg += '⚠️ Phân đoạn thiếu: ' + cmd.missing.segments.map(s => `Tập ${s.episode} (${s.segment}/${s.totalSeg})`).join(', ');
+                    }
+                    const existingMsg = document.querySelector('.missing');
+                    if (!existingMsg) {
+                        const div = document.createElement('div');
+                        div.className = 'missing';
+                        div.textContent = msg;
+                        document.getElementById('content').appendChild(div);
+                    }
+                    break;
+                case 'startCountdown':
+                    document.getElementById('cancelBtn').style.display = 'inline-block';
+                    document.getElementById('countdown').textContent = '⏳ ' + cmd.sec + 's';
+                    break;
+                case 'updateCountdown':
+                    if (cmd.sec <= 0) {
+                        document.getElementById('cancelBtn').style.display = 'none';
+                        document.getElementById('countdown').textContent = '';
+                    } else {
+                        document.getElementById('countdown').textContent = '⏳ ' + cmd.sec + 's';
+                    }
+                    break;
+            }
+        }
+
+        function renderEpisodeList(list) {
+            if (!list || !list.length) return '';
+            let html = '<ul class="episode-list">';
+            list.forEach(e => {
+                html += `<li><a href="${e.url}" target="_blank" class="${e.isCurrent ? 'current' : ''}">${e.isCurrent ? '📌' : '📺'} ${escapeHTML(e.title)}</a></li>`;
+            });
+            html += '</ul>';
+            return html;
+        }
+
+        function renderToggles(toggles) {
+            if (!toggles) return '';
+            return `
+                <div class="toggle-group">
+                    <label><input type="checkbox" ${toggles.autoPlay ? 'checked' : ''} onchange="sendAction({action:'toggleAuto', value: this.checked})"> Tự động chuyển</label>
+                    <label><input type="checkbox" ${toggles.marathon ? 'checked' : ''} onchange="sendAction({action:'toggleMarathon', value: this.checked})"> Marathon</label>
+                    <label><input type="checkbox" ${toggles.autoSkip ? 'checked' : ''} onchange="sendAction({action:'toggleAutoSkip', value: this.checked})"> Tự động tua intro</label>
+                    <label><input type="checkbox" ${toggles.voiceEnabled ? 'checked' : ''} onchange="sendAction({action:'toggleVoice', value: this.checked})"> Voice Control 🎤</label>
+                    <label><input type="checkbox" ${toggles.audioMode ? 'checked' : ''} onchange="sendAction({action:'toggleAudio', value: this.checked})"> Audio Mode 🔇</label>
+                    <label><input type="checkbox" ${toggles.pipEnabled ? 'checked' : ''} onchange="sendAction({action:'togglePiP', value: this.checked})"> Auto PiP 🖼️</label>
+                </div>
+            `;
+        }
+
+        function escapeHTML(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

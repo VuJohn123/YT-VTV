@@ -9,7 +9,7 @@ let marathon = GM_getValue('vtvUlt_marathon', false);
 let autoSkip = GM_getValue('vtvUlt_autoskip', false);
 let nextUrl = null, nextTitle = '';
 let previousEp = null, episodeList = [];
-let countdownInterval, timeCheckInterval, redirectScheduled = false;
+let countdownInterval = null, redirectScheduled = false;
 let videoEl, panel, channelName = '', lastVid, seriesKey, parsedInfo;
 let uiCollapsed = GM_getValue('vtvUlt_collapsed', false);
 let uiHidden = GM_getValue('vtvUlt_hidden', false);
@@ -37,7 +37,6 @@ function parseTitle(rawTitle) {
     else if (/Trailer Official/i.test(t)) { r.format = 'trailer'; t = t.replace(/Trailer Official\s*/i, ''); }
     else if (/Highlight|Trích đoạn/i.test(t)) r.format = 'highlight';
 
-    // Mẫu 1: "Tên series tập X - P2 (a/b)" hoặc "Tên series tập X (a/b)"
     let m = t.match(/^(.*?)\s+(?:tập|Tập|TẬP)\s*(\d+(?:\.\d+)?)(?:\s*[-–]\s*(?:P(\d+)|Phần\s*(\d+)))?\s*(?:\((\d+)\/(\d+)\))?/i);
     if (m) {
         r.series = m[1].trim();
@@ -45,7 +44,6 @@ function parseTitle(rawTitle) {
         r.season = m[3] ? parseInt(m[3]) : (m[4] ? parseInt(m[4]) : null);
         if (m[5] && m[6]) { r.segment = parseInt(m[5]); r.totalSeg = parseInt(m[6]); }
     } else {
-        // Mẫu 2: "Tên series P2 tập X (a/b)" (không dấu gạch ngang)
         m = t.match(/^(.*?)\s+(?:P(\d+)|Phần\s*(\d+))\s+(?:tập|Tập|TẬP)\s*(\d+(?:\.\d+)?)\s*(?:\((\d+)\/(\d+)\))?/i);
         if (m) {
             r.series = m[1].trim();
@@ -53,7 +51,6 @@ function parseTitle(rawTitle) {
             r.episode = parseFloat(m[4]);
             if (m[5] && m[6]) { r.segment = parseInt(m[5]); r.totalSeg = parseInt(m[6]); }
         } else {
-            // Fallback: số tập sau dấu |
             m = t.match(/^(.*?)\s*\|\s*(?:tập|Tập|TẬP)\s*(\d+(?:\.\d+)?)/i);
             if (m) { r.series = m[1].trim(); r.episode = parseFloat(m[2]); }
             else {
@@ -97,4 +94,31 @@ function suggestMissingSegments(list) {
         }
     }
     return missing;
+}
+
+// Countdown functions (tách từ ui.js)
+function cancelRedirect() {
+    redirectScheduled = false;
+    if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+    if (typeof sendToPopup === 'function') sendToPopup({ action: 'updateCountdown', sec: 0 });
+}
+function doRedirect() {
+    if (nextUrl && !adVideoDetected) window.location.href = nextUrl;
+}
+function startCountdown(sec) {
+    if (!autoPlay || !nextUrl || adVideoDetected) return;
+    redirectScheduled = true;
+    if (typeof sendToPopup === 'function') sendToPopup({ action: 'startCountdown', sec });
+    if (countdownInterval) clearInterval(countdownInterval);
+    let rem = sec;
+    countdownInterval = setInterval(() => {
+        rem--;
+        if (rem <= 0) { clearInterval(countdownInterval); doRedirect(); }
+        else { if (typeof sendToPopup === 'function') sendToPopup({ action: 'updateCountdown', sec: rem }); }
+    }, 1000);
+}
+
+function getAdaptiveThreshold() {
+    if (!videoEl?.duration || videoEl.duration < AD_MAX_DURATION) return 0;
+    return Math.max(5, Math.min(30, Math.floor(videoEl.duration * 0.03)));
 }
