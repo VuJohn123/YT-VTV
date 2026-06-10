@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
-// @version      8.0
-// @description  Popup UI, voice nâng cấp, fix tìm tập. Marathon, PiP, audio mode...
+// @version      8.1
+// @description  Injected UI, voice nâng cấp, fix tìm tập. Marathon, PiP, audio mode...
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -17,6 +17,7 @@
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/search.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/episode-navigator.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/storage.js
+// @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/ui.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/adblock.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/smart-features.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/keyboard.js
@@ -28,80 +29,23 @@
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/missing-detector.js
 // @updateURL    https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/vtv-ultimate.user.js
 // @downloadURL  https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/vtv-ultimate.user.js
-// @run-at       document-idle
+// @run-at       document-end
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    let popupWindow = null;
-    let popupReady = false;
-    const messageQueue = [];
-
-    function sendToPopup(msg) {
-        if (popupWindow && popupReady) {
-            popupWindow.postMessage({ type: 'vtv-cmd', data: msg }, '*');
-        } else {
-            messageQueue.push(msg);
-        }
-    }
-
-    function openPopup() {
-        if (popupWindow && !popupWindow.closed) {
-            popupWindow.focus();
-            return;
-        }
-        const url = '   https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/ui-popup.html';
-        popupWindow = window.open(url, 'vtv_popup', 'width=400,height=600,resizable,scrollbars=no,status=no,location=no,toolbar=no,menubar=no');
-        if (!popupWindow) {
-            log('Popup bị chặn, hãy cho phép popup cho trang này.');
-            return;
-        }
-        window.addEventListener('message', (e) => {
-            if (e.data && e.data.type === 'vtv-ready') {
-                popupReady = true;
-                log('Popup ready');
-                while (messageQueue.length) {
-                    popupWindow.postMessage({ type: 'vtv-cmd', data: messageQueue.shift() }, '*');
-                }
-            } else if (e.data && e.data.type === 'vtv-action') {
-                handlePopupAction(e.data.data);
-            }
-        });
-    }
-
-    function handlePopupAction(action) {
-        log('Popup action:', action);
-        switch (action.action) {
-            case 'skip': if (nextUrl) window.location.href = nextUrl; break;
-            case 'prev': if (previousEp?.url) window.location.href = previousEp.url; break;
-            case 'cancel': cancelRedirect(); break;
-            case 'toggleAuto': autoPlay = action.value; GM_setValue('vtvUlt_auto', autoPlay); break;
-            case 'toggleMarathon': marathon = action.value; GM_setValue('vtvUlt_marathon', marathon); if (marathon) { document.body.classList.add('vtv-marathon'); startAdBlocking(); } else { document.body.classList.remove('vtv-marathon'); stopAdBlocking(); } break;
-            case 'toggleAutoSkip': autoSkip = action.value; GM_setValue('vtvUlt_autoskip', autoSkip); break;
-            case 'toggleVoice': voiceEnabled = action.value; GM_setValue('vtvUlt_voice', voiceEnabled); if (voiceEnabled) startVoiceControl(); else stopVoiceControl(); break;
-            case 'toggleAudio': audioMode = action.value; GM_setValue('vtvUlt_audioMode', audioMode); if (audioMode) enableAudioMode(); else disableAudioMode(); break;
-            case 'togglePiP': pipEnabled = action.value; GM_setValue('vtvUlt_pip', pipEnabled); if (pipEnabled) enableAutoPiP(); else disableAutoPiP(); break;
-            case 'goCorrect': if (action.url) window.location.href = action.url; break;
-            case 'stay': clearSeries(seriesKey); main(); break;
-            case 'manualSearch': handleManualSearch(action.query); break;
-        }
-    }
-
-    async function handleManualSearch(query) {
-        const results = await searchYT(query);
-        sendToPopup({ action: 'showManualResults', results });
-    }
-
     async function main() {
+        log('[Main] Starting main()');
         cancelRedirect();
         nextUrl = null; nextTitle = ''; previousEp = null; episodeList = [];
         adVideoDetected = false;
+        if (!panel) createPanel(); else if (!uiHidden) renderSearching();
 
         channelName = await waitForChannel();
         if (channelName !== TARGET_CHANNEL) {
-            sendToPopup({ action: 'setTitle', text: '❌ Sai kênh' });
-            sendToPopup({ action: 'setBody', html: `<div>Kênh hiện tại: ${channelName || 'không xác định'}</div>` });
+            setTitle('❌ Sai kênh');
+            setBody(`<div>${channelName || 'Không xác định'}</div>`);
             return;
         }
 
@@ -110,8 +54,9 @@
         log('Raw title:', rawTitle);
 
         if (document.querySelector('ytd-message-renderer #message') || document.body.innerText.includes('Video unavailable')) {
-            sendToPopup({ action: 'setTitle', text: '⚠️ Video không khả dụng' });
-            sendToPopup({ action: 'setBody', html: '<div>Video bị gỡ hoặc riêng tư.</div>' });
+            setTitle('⚠️ Video không khả dụng');
+            setBody('<div>Video bị gỡ hoặc riêng tư.</div>');
+            addToggles('vtv-panel-content');
             return;
         }
 
@@ -119,11 +64,14 @@
         if (!info.episode) {
             const ap = getYouTubeAutoplay();
             if (ap) {
-                sendToPopup({ action: 'showAutoplay', title: ap.title, url: ap.url, toggles: { autoPlay, marathon, autoSkip, voiceEnabled, audioMode, pipEnabled } });
+                setTitle('🎞️ Gợi ý YouTube');
+                setBody(`<div class="next-title">${escapeHTML(ap.title)}</div><button id="vtv-skip">⏭ Xem ngay</button>`);
+                document.getElementById('vtv-skip')?.addEventListener('click', () => { if (ap.url) window.location.href = ap.url; });
                 nextUrl = ap.url; nextTitle = ap.title;
             } else {
-                sendToPopup({ action: 'setTitle', text: '❌ Không nhận dạng được tập phim' });
+                setBody('<div class="title">❌ Không nhận dạng được tập phim</div>');
             }
+            addToggles('vtv-panel-content');
             setupMonitoring();
             return;
         }
@@ -140,7 +88,7 @@
             } else if (info.episode === lastWatched + 1) {
                 log('Next');
             } else {
-                sendToPopup({ action: 'showOutOfOrder', current: info.episode, expected: lastWatched + 1, url: stored.nextUrl });
+                renderOutOfOrder(info.episode, lastWatched + 1, stored.nextUrl);
                 return;
             }
         }
@@ -157,18 +105,35 @@
 
         if (next) {
             nextUrl = next.url; nextTitle = next.title;
+            renderFound(nextTitle, nextUrl, next.source);
             const link = document.createElement('link'); link.rel = 'prefetch'; link.href = nextUrl; document.head.appendChild(link);
             storeSeries(seriesKey, info.episode, nextUrl, nextTitle);
-            sendToPopup({ action: 'showFound', title: nextTitle, url: nextUrl, source: next.source, previousEp, episodeList, toggles: { autoPlay, marathon, autoSkip, voiceEnabled, audioMode, pipEnabled } });
         } else {
-            sendToPopup({ action: 'showNotFound', toggles: { autoPlay, marathon, autoSkip, voiceEnabled, audioMode, pipEnabled } });
+            setTitle('❌ Không tìm thấy tập kế');
+            setBody(`<input type="text" id="vtv-manual" placeholder="Tìm tập..."><button id="vtv-manual-btn">Tìm</button><div id="vtv-panel-content"></div>`);
+            document.getElementById('vtv-manual-btn')?.addEventListener('click', async () => {
+                const q = document.getElementById('vtv-manual')?.value.trim();
+                if (q) {
+                    const res = await searchYT(q);
+                    const c = document.getElementById('vtv-panel-content');
+                    if (c) c.innerHTML = '<b>Kết quả:</b><ul class="episode-list">' + res.map(r => `<li><a href="https://youtu.be/${r.videoId}">${escapeHTML(r.title)}</a></li>`).join('') + '</ul>';
+                }
+            });
+            addToggles('vtv-panel-content');
             const ap = getYouTubeAutoplay();
             if (ap) { nextUrl = ap.url; nextTitle = ap.title; }
         }
 
         const missing = detectMissingEpisodes(episodeList);
         if (missing.episodes.length || missing.segments.length) {
-            sendToPopup({ action: 'showMissing', missing });
+            let msg = '';
+            if (missing.episodes.length) msg += `⚠️ Tập bị thiếu: ${missing.episodes.join(', ')}. `;
+            if (missing.segments.length) {
+                msg += '⚠️ Phân đoạn thiếu: ';
+                msg += missing.segments.map(s => `Tập ${s.episode} (${s.segment}/${s.totalSeg})`).join(', ');
+            }
+            const c = document.getElementById('vtv-panel-content');
+            if (c) c.innerHTML += `<br><b>${msg}</b>`;
         }
 
         setupMonitoring();
@@ -183,23 +148,22 @@
         if (location.pathname !== '/watch') return;
         const vid = new URLSearchParams(location.search).get('v');
         if (vid === lastVid) return;
-        lastVid = vid;
-        main();
+        setTimeout(() => {
+            if (new URLSearchParams(location.search).get('v') !== vid) return;
+            lastVid = vid;
+            main();
+        }, 800);
     }
 
     setupProfiles();
     setupKeyboardShortcuts();
-    openPopup();
-    document.addEventListener('yt-navigate-finish', onNavigate);
 
     if (location.pathname === '/watch') {
-        const checkPopupInterval = setInterval(() => {
-            if (popupReady) {
-                clearInterval(checkPopupInterval);
-                main();
-            }
-        }, 500);
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(main, 500));
+        else setTimeout(main, 500);
     }
+    document.addEventListener('yt-navigate-finish', onNavigate);
+
     if (marathon) { document.body.classList.add('vtv-marathon'); startAdBlocking(); }
     window.addEventListener('beforeunload', () => {
         stopAdBlocking();

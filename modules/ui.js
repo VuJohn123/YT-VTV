@@ -1,3 +1,4 @@
+// ui.js - Giao diện panel, movable, countdown, monitoring (dùng vtvLastTime)
 GM_addStyle(`
     #vtv-ult-panel {
         position: fixed; bottom: 20px; right: 20px;
@@ -48,9 +49,7 @@ GM_addStyle(`
     #vtv-ult-panel button:hover { background: #1c8adb; }
     #vtv-ult-panel button.secondary { background: #444; }
     #vtv-ult-panel button.back-btn { background: #cc3333; }
-    #vtv-ult-panel .countdown {
-        font-size: 13px; color: #ffcc00; margin-left: 8px;
-    }
+    #vtv-ult-panel .countdown { font-size: 13px; color: #ffcc00; margin-left: 8px; }
     #vtv-ult-panel .auto-toggle,
     #vtv-ult-panel .marathon-toggle,
     #vtv-ult-panel .autoskip-toggle,
@@ -72,12 +71,7 @@ GM_addStyle(`
         display: block; padding: 4px 8px; border-radius: 4px;
     }
     #vtv-ult-panel .episode-list a:hover { background: #444; text-decoration: none; }
-    #vtv-ult-panel .episode-list a.current {
-        background: #555; color: #fff; font-weight: bold;
-    }
-    .vtv-pip-active #movie_player {
-        position: fixed; bottom: 20px; left: 20px; width: 300px; height: 169px; z-index: 10000;
-    }
+    #vtv-ult-panel .episode-list a.current { background: #555; color: #fff; font-weight: bold; }
 `);
 
 function createPanel() {
@@ -111,28 +105,22 @@ function createPanel() {
         uiCollapsed = panel.classList.contains('collapsed');
         GM_setValue('vtvUlt_collapsed', uiCollapsed);
         document.getElementById('vtv-collapse-btn').textContent = uiCollapsed ? '+' : '–';
-        log('Panel collapsed:', uiCollapsed);
     });
     document.getElementById('vtv-close-btn').addEventListener('click', () => {
         panel.classList.add('hidden');
         uiHidden = true;
         GM_setValue('vtvUlt_hidden', true);
         mini.style.display = 'flex';
-        log('Panel hidden');
     });
     mini.addEventListener('click', () => {
         panel.classList.remove('hidden');
         uiHidden = false;
         GM_setValue('vtvUlt_hidden', false);
         mini.style.display = 'none';
-        log('Panel shown');
     });
 
     if (uiCollapsed) panel.classList.add('collapsed');
-    if (uiHidden) {
-        panel.classList.add('hidden');
-        mini.style.display = 'flex';
-    }
+    if (uiHidden) { panel.classList.add('hidden'); mini.style.display = 'flex'; }
 
     makePanelMovable(hd);
     if (panelPos) {
@@ -142,26 +130,22 @@ function createPanel() {
         panel.style.bottom = 'auto';
     }
     snapPanelToViewport();
-    log('Panel created');
 }
 
 function makePanelMovable(header) {
     let isDragging = false, sx, sy, il, it;
     header.addEventListener('mousedown', e => {
         isDragging = true;
-        sx = e.clientX;
-        sy = e.clientY;
+        sx = e.clientX; sy = e.clientY;
         const r = panel.getBoundingClientRect();
-        il = r.left;
-        it = r.top;
+        il = r.left; it = r.top;
         e.preventDefault();
     });
     document.addEventListener('mousemove', e => {
         if (!isDragging) return;
         panel.style.left = (il + e.clientX - sx) + 'px';
         panel.style.top = (it + e.clientY - sy) + 'px';
-        panel.style.right = 'auto';
-        panel.style.bottom = 'auto';
+        panel.style.right = 'auto'; panel.style.bottom = 'auto';
     });
     document.addEventListener('mouseup', () => {
         if (isDragging) {
@@ -169,16 +153,8 @@ function makePanelMovable(header) {
             snapPanelToViewport();
             const r = panel.getBoundingClientRect();
             GM_setValue('vtvUlt_panelPos', { left: r.left, top: r.top });
-            log('Panel moved to:', r.left, r.top);
         }
     });
-    if (panelPos) {
-        panel.style.left = panelPos.left + 'px';
-        panel.style.top = panelPos.top + 'px';
-        panel.style.right = 'auto';
-        panel.style.bottom = 'auto';
-        snapPanelToViewport();
-    }
 }
 
 function snapPanelToViewport() {
@@ -194,19 +170,11 @@ function snapPanelToViewport() {
     if (newLeft !== r.left || newTop !== r.top) {
         panel.style.left = newLeft + 'px';
         panel.style.top = newTop + 'px';
-        log('Panel snapped to:', newLeft, newTop);
     }
 }
 
-function setBody(html) {
-    const b = document.getElementById('vtv-ult-body');
-    if (b) b.innerHTML = html;
-    log('Panel body updated');
-}
-function setTitle(text) {
-    const t = document.querySelector('#vtv-ult-header .title');
-    if (t) t.textContent = text;
-}
+function setBody(html) { const b = document.getElementById('vtv-ult-body'); if (b) b.innerHTML = html; }
+function setTitle(text) { const t = document.querySelector('#vtv-ult-header .title'); if (t) t.textContent = text; }
 
 function addToggles(cid) {
     const c = document.getElementById(cid);
@@ -219,70 +187,32 @@ function addToggles(cid) {
         <div class="audio-toggle"><label><input type="checkbox" id="vtv-audio-mode" ${audioMode ? 'checked' : ''}> Audio Mode 🔇</label></div>
         <div class="pip-toggle"><label><input type="checkbox" id="vtv-pip" ${pipEnabled ? 'checked' : ''}> Auto PiP 🖼️</label></div>
     `;
-    document.getElementById('vtv-auto')?.addEventListener('change', e => {
-        autoPlay = e.target.checked;
-        GM_setValue('vtvUlt_auto', autoPlay);
-        log('Auto play:', autoPlay);
-    });
+    document.getElementById('vtv-auto')?.addEventListener('change', e => { autoPlay = e.target.checked; GM_setValue('vtvUlt_auto', autoPlay); });
     document.getElementById('vtv-marathon')?.addEventListener('change', e => {
-        marathon = e.target.checked;
-        GM_setValue('vtvUlt_marathon', marathon);
-        log('Marathon:', marathon);
-        if (marathon) {
-            document.body.classList.add('vtv-marathon');
-            if (typeof startAdBlocking === 'function') startAdBlocking();
-        } else {
-            document.body.classList.remove('vtv-marathon');
-            if (typeof stopAdBlocking === 'function') stopAdBlocking();
-        }
+        marathon = e.target.checked; GM_setValue('vtvUlt_marathon', marathon);
+        if (marathon) { document.body.classList.add('vtv-marathon'); if (typeof startAdBlocking === 'function') startAdBlocking(); }
+        else { document.body.classList.remove('vtv-marathon'); if (typeof stopAdBlocking === 'function') stopAdBlocking(); }
     });
-    document.getElementById('vtv-autoskip')?.addEventListener('change', e => {
-        autoSkip = e.target.checked;
-        GM_setValue('vtvUlt_autoskip', autoSkip);
-        log('Auto skip:', autoSkip);
-    });
+    document.getElementById('vtv-autoskip')?.addEventListener('change', e => { autoSkip = e.target.checked; GM_setValue('vtvUlt_autoskip', autoSkip); });
     document.getElementById('vtv-voice')?.addEventListener('change', e => {
-        voiceEnabled = e.target.checked;
-        GM_setValue('vtvUlt_voice', voiceEnabled);
-        if (voiceEnabled) {
-            if (typeof startVoiceControl === 'function') startVoiceControl();
-        } else {
-            if (typeof stopVoiceControl === 'function') stopVoiceControl();
-        }
-        log('Voice control:', voiceEnabled);
+        voiceEnabled = e.target.checked; GM_setValue('vtvUlt_voice', voiceEnabled);
+        if (voiceEnabled) { if (typeof startVoiceControl === 'function') startVoiceControl(); }
+        else { if (typeof stopVoiceControl === 'function') stopVoiceControl(); }
     });
     document.getElementById('vtv-audio-mode')?.addEventListener('change', e => {
-        audioMode = e.target.checked;
-        GM_setValue('vtvUlt_audioMode', audioMode);
-        if (audioMode) {
-            if (typeof enableAudioMode === 'function') enableAudioMode();
-        } else {
-            if (typeof disableAudioMode === 'function') disableAudioMode();
-        }
-        log('Audio mode:', audioMode);
+        audioMode = e.target.checked; GM_setValue('vtvUlt_audioMode', audioMode);
+        if (audioMode) { if (typeof enableAudioMode === 'function') enableAudioMode(); }
+        else { if (typeof disableAudioMode === 'function') disableAudioMode(); }
     });
     document.getElementById('vtv-pip')?.addEventListener('change', e => {
-        pipEnabled = e.target.checked;
-        GM_setValue('vtvUlt_pip', pipEnabled);
-        if (pipEnabled) {
-            if (typeof enableAutoPiP === 'function') enableAutoPiP();
-        } else {
-            if (typeof disableAutoPiP === 'function') disableAutoPiP();
-        }
-        log('Auto PiP:', pipEnabled);
+        pipEnabled = e.target.checked; GM_setValue('vtvUlt_pip', pipEnabled);
+        if (pipEnabled) { if (typeof enableAutoPiP === 'function') enableAutoPiP(); }
+        else { if (typeof disableAutoPiP === 'function') disableAutoPiP(); }
     });
-    if (marathon) {
-        document.body.classList.add('vtv-marathon');
-        if (typeof startAdBlocking === 'function') startAdBlocking();
-    }
+    if (marathon) { document.body.classList.add('vtv-marathon'); if (typeof startAdBlocking === 'function') startAdBlocking(); }
 }
 
-function renderSearching() {
-    setTitle('⏳ Đang tìm...');
-    setBody('<div id="vtv-panel-content"></div>');
-    addToggles('vtv-panel-content');
-}
-
+function renderSearching() { setTitle('⏳ Đang tìm...'); setBody('<div id="vtv-panel-content"></div>'); addToggles('vtv-panel-content'); }
 function renderFound(title, url, source) {
     setTitle('▶️ Điều hướng');
     let html = `
@@ -298,24 +228,15 @@ function renderFound(title, url, source) {
         <div id="vtv-panel-content"></div>
     `;
     setBody(html);
-    if (previousEp) {
-        document.getElementById('vtv-prev')?.addEventListener('click', () => {
-            if (previousEp.url) window.location.href = previousEp.url;
-        });
-    }
-    document.getElementById('vtv-skip')?.addEventListener('click', () => {
-        if (url) window.location.href = url;
-    });
+    if (previousEp) { document.getElementById('vtv-prev')?.addEventListener('click', () => { if (previousEp.url) window.location.href = previousEp.url; }); }
+    document.getElementById('vtv-skip')?.addEventListener('click', () => { if (url) window.location.href = url; });
     document.getElementById('vtv-cancel')?.addEventListener('click', cancelRedirect);
     addToggles('vtv-panel-content');
     if (episodeList.length) {
         const ec = document.getElementById('episode-list-container');
-        ec.innerHTML = '<ul class="episode-list">' + episodeList.map(e =>
-            `<li><a href="${e.url}" class="${e.isCurrent ? 'current' : ''}">${e.isCurrent ? '📌' : '📺'} ${escapeHTML(e.title)}</a></li>`
-        ).join('') + '</ul>';
+        ec.innerHTML = '<ul class="episode-list">' + episodeList.map(e => `<li><a href="${e.url}" class="${e.isCurrent ? 'current' : ''}">${e.isCurrent ? '📌' : '📺'} ${escapeHTML(e.title)}</a></li>`).join('') + '</ul>';
     }
 }
-
 function renderOutOfOrder(current, expected, expectedUrl) {
     setTitle('⚠️ Sai thứ tự tập');
     setBody(`
@@ -327,81 +248,49 @@ function renderOutOfOrder(current, expected, expectedUrl) {
         <div id="vtv-panel-content"></div>
     `);
     addToggles('vtv-panel-content');
-    document.getElementById('vtv-go')?.addEventListener('click', () => {
-        if (expectedUrl) window.location.href = expectedUrl;
-    });
-    document.getElementById('vtv-stay')?.addEventListener('click', () => {
-        clearSeries(seriesKey);
-        main();
-    });
+    document.getElementById('vtv-go')?.addEventListener('click', () => { if (expectedUrl) window.location.href = expectedUrl; });
+    document.getElementById('vtv-stay')?.addEventListener('click', () => { clearSeries(seriesKey); main(); });
 }
 
 function cancelRedirect() {
-    log('Cancel redirect');
     redirectScheduled = false;
     if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
     if (panel) {
         document.getElementById('vtv-cancel')?.style.setProperty('display', 'none');
-        const cd = document.getElementById('vtv-cd');
-        if (cd) cd.textContent = '';
+        const cd = document.getElementById('vtv-cd'); if (cd) cd.textContent = '';
     }
 }
-
-function doRedirect() {
-    if (nextUrl && !adVideoDetected) {
-        log('Redirecting to:', nextUrl);
-        window.location.href = nextUrl;
-    }
-}
-
+function doRedirect() { if (nextUrl && !adVideoDetected) window.location.href = nextUrl; }
 function startCountdown(sec) {
     if (!autoPlay || !nextUrl || adVideoDetected) return;
-    log('Countdown started:', sec);
     redirectScheduled = true;
-    const cd = document.getElementById('vtv-cd');
-    if (cd) cd.textContent = `⏳ ${sec}s`;
+    const cd = document.getElementById('vtv-cd'); if (cd) cd.textContent = `⏳ ${sec}s`;
     document.getElementById('vtv-cancel').style.display = 'inline-block';
     if (countdownInterval) clearInterval(countdownInterval);
     let rem = sec;
     countdownInterval = setInterval(() => {
         rem--;
-        if (rem <= 0) {
-            clearInterval(countdownInterval);
-            doRedirect();
-        } else if (cd) {
-            cd.textContent = `⏳ ${rem}s`;
-        }
+        if (rem <= 0) { clearInterval(countdownInterval); doRedirect(); }
+        else if (cd) cd.textContent = `⏳ ${rem}s`;
     }, 1000);
+}
+function getAdaptiveThreshold() {
+    if (!videoEl?.duration || videoEl.duration < AD_MAX_DURATION) return 0;
+    return Math.max(5, Math.min(30, Math.floor(videoEl.duration * 0.03)));
 }
 
 function setupMonitoring() {
-    log('Setting up monitoring');
-    if (videoEl) {
-        videoEl.removeEventListener('ended', onVideoEnded);
-        videoEl.removeEventListener('seeked', onSeeked);
-    }
+    if (videoEl) { videoEl.removeEventListener('ended', onVideoEnded); videoEl.removeEventListener('seeked', onSeeked); }
     videoEl = document.querySelector('video.html5-main-video');
-    if (!videoEl) {
-        log('Video element not found, retrying...');
-        setTimeout(setupMonitoring, 1000);
-        return;
-    }
+    if (!videoEl) { setTimeout(setupMonitoring, 1000); return; }
     if (timeCheckInterval) clearInterval(timeCheckInterval);
     vtvLastTime = videoEl.currentTime;
     if (seriesKey && autoSkip) setTimeout(() => applyAutoSkip(seriesKey), 2000);
-
     const checkAd = () => {
-        if (videoEl && videoEl.duration && videoEl.duration < AD_MAX_DURATION) {
-            adVideoDetected = true;
-            log('Ad video detected');
-            cancelRedirect();
-        } else {
-            adVideoDetected = false;
-        }
+        if (videoEl && videoEl.duration && videoEl.duration < AD_MAX_DURATION) { adVideoDetected = true; cancelRedirect(); }
+        else adVideoDetected = false;
     };
-    videoEl.addEventListener('loadedmetadata', checkAd);
-    checkAd();
-
+    videoEl.addEventListener('loadedmetadata', checkAd); checkAd();
     timeCheckInterval = setInterval(() => {
         if (!videoEl || !autoPlay || !nextUrl || redirectScheduled || adVideoDetected) return;
         const rem = videoEl.duration - videoEl.currentTime;
@@ -411,25 +300,14 @@ function setupMonitoring() {
     videoEl.addEventListener('seeked', onSeeked);
 }
 
-function getAdaptiveThreshold() {
-    if (!videoEl?.duration || videoEl.duration < AD_MAX_DURATION) return 0;
-    return Math.max(5, Math.min(30, Math.floor(videoEl.duration * 0.03)));
-}
-
 function onSeeked() {
     if (!videoEl || !autoPlay || !nextUrl || redirectScheduled || adVideoDetected) return;
     const cur = videoEl.currentTime;
-    log('Seeked from', vtvLastTime, 'to', cur);
     if (cur > vtvLastTime + 5) learnSkip(seriesKey, vtvLastTime, cur);
     vtvLastTime = cur;
     const dur = videoEl.duration;
     if (dur && (dur - cur) <= getAdaptiveThreshold() * 2) startCountdown(Math.floor(dur - cur));
 }
-
 function onVideoEnded() {
-    log('Video ended');
-    if (autoPlay && nextUrl && !adVideoDetected) {
-        cancelRedirect();
-        doRedirect();
-    }
+    if (autoPlay && nextUrl && !adVideoDetected) { cancelRedirect(); doRedirect(); }
 }
