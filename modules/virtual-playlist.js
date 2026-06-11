@@ -1,4 +1,19 @@
-// virtual-playlist.js - Lấy toàn bộ video từ playlist (sửa lỗi thiếu tập)
+// virtual-playlist.js - Lấy toàn bộ video từ playlist (cache search & virtual playlist)
+const searchCache = new Map();
+const SEARCH_CACHE_TTL = 30 * 60 * 1000; // 30 phút
+
+// wrapper searchYT có cache
+async function cachedSearchYT(query) {
+    const key = query.toLowerCase().trim();
+    const cached = searchCache.get(key);
+    if (cached && (Date.now() - cached.timestamp < SEARCH_CACHE_TTL)) {
+        log('Search cache hit:', query);
+        return cached.data;
+    }
+    const results = await searchYT(query);
+    searchCache.set(key, { data: results, timestamp: Date.now() });
+    return results;
+}
 
 async function fetchPlaylistsForSeries(seriesName) {
     const query = `${seriesName} playlist`;
@@ -24,6 +39,7 @@ async function fetchPlaylistsForSeries(seriesName) {
             }
         }
     } catch(e) {}
+    log(`Found ${playlists.length} playlists for "${seriesName}"`);
     return playlists;
 }
 
@@ -127,7 +143,7 @@ async function buildVirtualPlaylist(seriesName) {
     const cached = GM_getValue(cacheKey, null);
     if (cached) {
         const data = JSON.parse(cached);
-        if (Date.now() - data.timestamp < 3600000) {
+        if (Date.now() - data.timestamp < 6 * 3600000) { // cache 6 giờ
             log('Using cached virtual playlist for', seriesName);
             return data.videos;
         }
@@ -141,6 +157,7 @@ async function buildVirtualPlaylist(seriesName) {
         const videos = await fetchVideosFromPlaylist(pl.playlistId);
         allVideos = allVideos.concat(videos);
     }
+    // loại bỏ trùng lặp
     const seen = new Set();
     const unique = [];
     for (const v of allVideos) {
@@ -149,6 +166,7 @@ async function buildVirtualPlaylist(seriesName) {
             unique.push(v);
         }
     }
+    // sắp xếp
     unique.sort((a, b) => {
         const pa = parseTitle(a.title);
         const pb = parseTitle(b.title);
