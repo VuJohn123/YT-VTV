@@ -1,4 +1,4 @@
-// utils.js - Biến toàn cục & hàm dùng chung
+// utils.js - Biến toàn cục, parseTitle cache, suggestMissingSegments, countdown
 const DEBUG = true;
 const TARGET_CHANNEL = 'VTV Giải Trí Official';
 const AD_MAX_DURATION = 30;
@@ -28,12 +28,15 @@ let vtvLastTime = -1;
 let voiceEnabled = GM_getValue('vtvUlt_voice', true);
 let audioMode = GM_getValue('vtvUlt_audioMode', false);
 let pipEnabled = GM_getValue('vtvUlt_pip', true);
+let playlistVisible = true;
 
 const log = (...a) => DEBUG && console.log('[VTV Ult]', ...a);
 const warn = (...a) => DEBUG && console.warn('[VTV Ult]', ...a);
 function escapeHTML(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+const titleCache = new Map();
 function parseTitle(rawTitle) {
+    if (titleCache.has(rawTitle)) return titleCache.get(rawTitle);
     log('Parsing title:', rawTitle);
     let t = rawTitle.replace(/\s*-\s*YouTube$/i, '').trim();
     const r = { series: '', season: null, episode: null, segment: null, totalSeg: null, format: 'full' };
@@ -73,6 +76,7 @@ function parseTitle(rawTitle) {
         const parts = t.split('|');
         r.series = parts[0].trim();
     }
+    titleCache.set(rawTitle, r);
     log('Parsed result:', r);
     return r;
 }
@@ -103,11 +107,9 @@ function suggestMissingSegments(list) {
     return missing;
 }
 
-// === Countdown functions ===
 function cancelRedirect() {
     redirectScheduled = false;
     if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
-    // Ẩn nút hủy và đồng hồ đếm ngược (nếu panel đang hiển thị)
     if (panel) {
         const cancelBtn = document.getElementById('vtv-cancel');
         if (cancelBtn) cancelBtn.style.display = 'none';

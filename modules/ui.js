@@ -1,4 +1,4 @@
-// ui.js - Giao diện panel, movable, countdown, monitoring (dùng vtvLastTime)
+// ui.js - Giao diện panel, movable, countdown, monitoring, toggle playlist
 GM_addStyle(`
     #vtv-ult-panel {
         position: fixed; bottom: 20px; right: 20px;
@@ -55,7 +55,8 @@ GM_addStyle(`
     #vtv-ult-panel .autoskip-toggle,
     #vtv-ult-panel .voice-toggle,
     #vtv-ult-panel .audio-toggle,
-    #vtv-ult-panel .pip-toggle {
+    #vtv-ult-panel .pip-toggle,
+    #vtv-ult-panel .playlist-toggle {
         display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: #aaa;
     }
     #vtv-ult-panel input[type="text"] {
@@ -63,7 +64,7 @@ GM_addStyle(`
         background: #555; color: #fff; font-size: 13px; box-sizing: border-box;
     }
     #vtv-ult-panel .episode-list {
-        list-style: none; padding: 0; margin: 6px 0; max-height: 150px; overflow-y: auto;
+        list-style: none; padding: 0; margin: 6px 0; max-height: 200px; overflow-y: auto;
     }
     #vtv-ult-panel .episode-list li { margin: 2px 0; }
     #vtv-ult-panel .episode-list a {
@@ -193,6 +194,7 @@ function addToggles(cid) {
         </div>
         <div class="audio-toggle"><label><input type="checkbox" id="vtv-audio-mode" ${audioMode ? 'checked' : ''}> Audio Mode 🔇</label></div>
         <div class="pip-toggle"><label><input type="checkbox" id="vtv-pip" ${pipEnabled ? 'checked' : ''}> Auto PiP 🖼️</label></div>
+        <div class="playlist-toggle"><label><input type="checkbox" id="vtv-playlist" ${playlistVisible ? 'checked' : ''}> Hiện playlist 📋</label></div>
     `;
     document.getElementById('vtv-auto')?.addEventListener('change', e => { autoPlay = e.target.checked; GM_setValue('vtvUlt_auto', autoPlay); });
     document.getElementById('vtv-marathon')?.addEventListener('change', e => {
@@ -216,6 +218,11 @@ function addToggles(cid) {
         if (pipEnabled) { if (typeof enableAutoPiP === 'function') enableAutoPiP(); }
         else { if (typeof disableAutoPiP === 'function') disableAutoPiP(); }
     });
+    document.getElementById('vtv-playlist')?.addEventListener('change', e => {
+        playlistVisible = e.target.checked;
+        const listContainer = document.getElementById('episode-list-container');
+        if (listContainer) listContainer.style.display = playlistVisible ? '' : 'none';
+    });
     if (marathon) { document.body.classList.add('vtv-marathon'); if (typeof startAdBlocking === 'function') startAdBlocking(); }
 }
 
@@ -231,7 +238,7 @@ function renderFound(title, url, source) {
             <span class="countdown" id="vtv-cd"></span>
         </div>
         <div class="next-title">${escapeHTML(title)}</div>
-        <div id="episode-list-container"></div>
+        <div id="episode-list-container" style="display:${playlistVisible ? '' : 'none'}"></div>
         <div id="vtv-panel-content"></div>
     `;
     setBody(html);
@@ -259,37 +266,12 @@ function renderOutOfOrder(current, expected, expectedUrl) {
     document.getElementById('vtv-stay')?.addEventListener('click', () => { clearSeries(seriesKey); main(); });
 }
 
-function cancelRedirect() {
-    redirectScheduled = false;
-    if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
-    if (panel) {
-        document.getElementById('vtv-cancel')?.style.setProperty('display', 'none');
-        const cd = document.getElementById('vtv-cd'); if (cd) cd.textContent = '';
-    }
-}
-function doRedirect() { if (nextUrl && !adVideoDetected) window.location.href = nextUrl; }
-function startCountdown(sec) {
-    if (!autoPlay || !nextUrl || adVideoDetected) return;
-    redirectScheduled = true;
-    const cd = document.getElementById('vtv-cd'); if (cd) cd.textContent = `⏳ ${sec}s`;
-    document.getElementById('vtv-cancel').style.display = 'inline-block';
-    if (countdownInterval) clearInterval(countdownInterval);
-    let rem = sec;
-    countdownInterval = setInterval(() => {
-        rem--;
-        if (rem <= 0) { clearInterval(countdownInterval); doRedirect(); }
-        else if (cd) cd.textContent = `⏳ ${rem}s`;
-    }, 1000);
-}
-function getAdaptiveThreshold() {
-    if (!videoEl?.duration || videoEl.duration < AD_MAX_DURATION) return 0;
-    return Math.max(5, Math.min(30, Math.floor(videoEl.duration * 0.03)));
-}
-
 function setupMonitoring() {
+    log('Setting up monitoring');
     if (videoEl) { videoEl.removeEventListener('ended', onVideoEnded); videoEl.removeEventListener('seeked', onSeeked); }
     videoEl = document.querySelector('video.html5-main-video');
-    if (!videoEl) { setTimeout(setupMonitoring, 1000); return; }
+    if (!videoEl) { log('Video element not found, retrying...'); setTimeout(setupMonitoring, 1000); return; }
+    log('Video element found, duration:', videoEl.duration);
     if (timeCheckInterval) clearInterval(timeCheckInterval);
     vtvLastTime = videoEl.currentTime;
     if (seriesKey && autoSkip) setTimeout(() => applyAutoSkip(seriesKey), 2000);
@@ -316,10 +298,10 @@ function onSeeked() {
     if (dur && (dur - cur) <= getAdaptiveThreshold() * 2) startCountdown(Math.floor(dur - cur));
 }
 function onVideoEnded() {
+    log('Video ended event fired. autoPlay=', autoPlay, 'nextUrl=', !!nextUrl, 'adVideoDetected=', adVideoDetected);
     if (autoPlay && nextUrl && !adVideoDetected) { cancelRedirect(); doRedirect(); }
 }
 
-// Hàm cập nhật label voice (được gọi từ smart-features.js)
 function updateVoiceLabel(text) {
     const label = document.getElementById('vtv-voice-label');
     if (label) {

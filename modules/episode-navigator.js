@@ -1,4 +1,4 @@
-// episode-navigator.js - Tìm tập tiếp theo, trước đó, danh sách đầy đủ phân đoạn
+// episode-navigator.js - Tìm tập tiếp theo, trước đó, danh sách (có cache virtual playlist)
 const MAX_EPISODES_IN_LIST = 10;
 
 async function findNext(info, channel) {
@@ -78,7 +78,7 @@ async function findPrevious(info, channel) {
     return {url: `https://youtu.be/${chosen.videoId}`, title: chosen.title, episode: pe};
 }
 
-async function findEpisodeList(info, channel) {
+async function findEpisodeList(info, channel, virtualPlaylistData) {
     const list = [];
     const mk = (exact) => (INCLUDE_CHANNEL_IN_SEARCH && channel) ? `${exact} ${channel}` : exact;
     const ce = info.episode;
@@ -87,25 +87,40 @@ async function findEpisodeList(info, channel) {
     const currentTitle = document.querySelector('h1.ytd-watch-metadata yt-formatted-string')?.textContent?.trim() || `Tập ${ce}`;
     list.push({ episode: ce, url: location.href, title: currentTitle, isCurrent: true, segment: info.segment || 0, totalSeg: info.totalSeg || 1 });
 
-    const startEp = Math.max(1, ce - 3);
-    const endEp = ce + 12;
-
-    for (let ep = startEp; ep <= endEp; ep++) {
-        if (ep === ce) continue;
-        const queries = [
-            `${info.series} tập ${ep}${partStr}`,
-            `${info.series} p${info.season || 2} tập ${ep}`,
-            `${info.series} phần ${info.season || 2} tập ${ep}`,
-        ];
-        for (const q of queries) {
-            const results = await searchYT(mk(q));
-            const valid = results.filter(v => {
-                const p = parseTitle(v.title);
-                return p && p.series === info.series && p.episode === ep && (info.season ? p.season === info.season : !p.season);
-            });
-            for (const vid of valid) {
-                const p = parseTitle(vid.title);
-                list.push({ episode: ep, url: `https://youtu.be/${vid.videoId}`, title: vid.title, isCurrent: false, segment: p.segment || 0, totalSeg: p.totalSeg || 1 });
+    if (virtualPlaylistData && virtualPlaylistData.length > 0) {
+        for (const vid of virtualPlaylistData) {
+            const p = parseTitle(vid.title);
+            if (p && p.series === info.series && p.episode) {
+                list.push({
+                    episode: p.episode,
+                    url: `https://youtu.be/${vid.videoId}`,
+                    title: vid.title,
+                    isCurrent: (p.episode === ce && (p.segment || 0) === (info.segment || 0)),
+                    segment: p.segment || 0,
+                    totalSeg: p.totalSeg || 1
+                });
+            }
+        }
+    } else {
+        const startEp = Math.max(1, ce - 3);
+        const endEp = ce + 12;
+        for (let ep = startEp; ep <= endEp; ep++) {
+            if (ep === ce) continue;
+            const queries = [
+                `${info.series} tập ${ep}${partStr}`,
+                `${info.series} p${info.season || 2} tập ${ep}`,
+                `${info.series} phần ${info.season || 2} tập ${ep}`,
+            ];
+            for (const q of queries) {
+                const results = await searchYT(mk(q));
+                const valid = results.filter(v => {
+                    const p = parseTitle(v.title);
+                    return p && p.series === info.series && p.episode === ep && (info.season ? p.season === info.season : !p.season);
+                });
+                for (const vid of valid) {
+                    const p = parseTitle(vid.title);
+                    list.push({ episode: ep, url: `https://youtu.be/${vid.videoId}`, title: vid.title, isCurrent: false, segment: p.segment || 0, totalSeg: p.totalSeg || 1 });
+                }
             }
         }
     }
@@ -120,6 +135,6 @@ async function findEpisodeList(info, channel) {
         const key = `${item.episode}_${item.segment || 0}`;
         if (!seen.has(key)) { seen.add(key); unique.push(item); }
     }
-    log(`Episode list: ${unique.length} episodes (range ${startEp}-${endEp})`);
+    log(`Episode list: ${unique.length} episodes`);
     return unique;
 }

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
-// @version      8.3
-// @description  Injected UI, voice label, fix tìm tập, audio mode & PiP sửa lỗi, mở rộng phát hiện tập thiếu, tối ưu mạng
+// @version      8.5
+// @description  Cache virtual playlist, toggle playlist, auto‑next mượt, tối ưu hiệu suất
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -35,6 +35,8 @@
 
 (function() {
     'use strict';
+
+    let cachedVirtualPlaylist = null;
 
     async function main() {
         log('[Main] Starting main()');
@@ -100,8 +102,15 @@
         const genres = detectGenres(desc);
         updateSeriesStats(seriesKey, videoEl?.duration || 0);
 
+        // Cache virtual playlist
+        if (!cachedVirtualPlaylist || (Date.now() - cachedVirtualPlaylist.timestamp > 3600000)) {
+            log('Building virtual playlist...');
+            const vplist = await buildVirtualPlaylist(info.series);
+            cachedVirtualPlaylist = { data: vplist, timestamp: Date.now() };
+        }
+        episodeList = await findEpisodeList(info, channelName, cachedVirtualPlaylist.data);
+
         previousEp = await findPrevious(info, channelName);
-        episodeList = await findEpisodeList(info, channelName);
         const next = await findNext(info, channelName);
 
         if (next) {
@@ -143,7 +152,6 @@
         if (voiceEnabled) startVoiceControl();
         if (audioMode) enableAudioMode();
         if (pipEnabled) enableAutoPiP();
-        // Tối ưu mạng
         setTimeout(optimizeConnection, 2000);
     }
 
