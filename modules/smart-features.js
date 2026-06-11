@@ -1,4 +1,4 @@
-// smart-features.js - Voice Control (native Vietnamese), GIF, Watch Later, Full Replace, Notes, Age Bypass, Scroll Playlist
+// smart-features.js - Voice Control (sửa lỗi không thực thi), GIF, Watch Later, Full Replace, Notes, Age Bypass, Scroll Playlist
 
 function initVoiceControl() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
@@ -18,7 +18,7 @@ function initVoiceControl() {
         let interimTranscript = '';
         for (let i = e.resultIndex; i < e.results.length; ++i) {
             const best = e.results[i][0];
-            if (e.results[i].isFinal && best.confidence > 0.6) {
+            if (e.results[i].isFinal && best.confidence > 0.5) {
                 finalTranscript += best.transcript;
             } else if (!e.results[i].isFinal) {
                 interimTranscript += best.transcript;
@@ -28,7 +28,8 @@ function initVoiceControl() {
         if (transcript) {
             if (typeof updateVoiceLabel === 'function') updateVoiceLabel(transcript);
             const t = transcript.toLowerCase().trim();
-            if (finalTranscript) {
+            // Thực thi lệnh ngay cả khi chỉ có interim (sau 1.5 giây không thay đổi)
+            if (finalTranscript || interimTranscript.length > 3) {
                 processVoiceCommand(t);
                 setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
             }
@@ -91,7 +92,10 @@ function processVoiceCommand(t) {
         let amount = 30;
         const m = t.match(/(\d+)\s*(phút|giây|s)/);
         if (m) amount = parseInt(m[1]) * (m[2].includes('phút') ? 60 : 1);
-        if (videoEl) videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + amount);
+        if (videoEl) {
+            videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + amount);
+            log('Voice: forward', amount, 'seconds');
+        }
     }
     else if (/chậm lại|lùi|tua lại|tua lui/i.test(t)) {
         let amount = 10;
