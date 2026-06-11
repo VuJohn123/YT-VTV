@@ -1,4 +1,4 @@
-// virtual-playlist.js - Lấy toàn bộ video từ playlist (dùng cache search toàn cục, sửa lọc mùa)
+// virtual-playlist.js - Lấy toàn bộ video từ playlist (dùng cache search toàn cục từ utils.js)
 
 async function fetchPlaylistsForSeries(seriesName) {
     const query = `${seriesName} playlist`;
