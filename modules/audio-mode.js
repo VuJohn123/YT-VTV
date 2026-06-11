@@ -17,11 +17,10 @@ function initAudioMode() {
 }
 
 async function setLowestQuality() {
-    if (!audioMode || !videoEl) return; // chỉ hạ chất lượng khi Audio Mode đang bật
+    if (!audioMode || !videoEl) return;
     if (previousQuality === null && typeof window.yt?.getPlayer?.().getPlaybackQuality === 'function') {
         try { previousQuality = window.yt.getPlayer().getPlaybackQuality(); } catch(e) {}
     }
-    // thử API player trước
     try {
         if (typeof window.yt?.getPlayer?.().setPlaybackQuality === 'function') {
             const available = window.yt.getPlayer().getAvailableQualityLevels();
@@ -33,7 +32,6 @@ async function setLowestQuality() {
             }
         }
     } catch(e) {}
-    // fallback: mở menu cài đặt
     try {
         const settingsBtn = document.querySelector('.ytp-settings-button');
         if (!settingsBtn) return;
@@ -72,7 +70,7 @@ async function setLowestQuality() {
 function enableAudioMode() {
     if (audioMode) return;
     audioMode = true;
-    GM_setValue('vtvUlt_audioMode', audioMode);
+    GM_setValue('vtvUlt_audioMode', true);
     initAudioMode();
     if (audioOverlay) {
         audioOverlay.style.display = 'block';
@@ -85,7 +83,7 @@ function enableAudioMode() {
 function disableAudioMode() {
     if (!audioMode) return;
     audioMode = false;
-    GM_setValue('vtvUlt_audioMode', audioMode);
+    GM_setValue('vtvUlt_audioMode', false);
     if (audioOverlay) {
         audioOverlay.style.display = 'none';
         if (videoEl) videoEl.style.opacity = '';
