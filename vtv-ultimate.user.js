@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
-// @version      8.7
-// @description  Fix panel không hiện, ngăn main() chạy 2 lần
+// @version      8.8
+// @description  Fix panel, main global, voice, auto-next, full features
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -37,7 +37,7 @@
     'use strict';
 
     let cachedVirtualPlaylist = null;
-    let mainRunning = false; // ngăn main chạy 2 lần
+    let mainRunning = false;
 
     async function main() {
         if (mainRunning) return;
@@ -47,15 +47,13 @@
         nextUrl = null; nextTitle = ''; previousEp = null; episodeList = [];
         adVideoDetected = false;
 
-        // Luôn tạo panel nếu chưa có, và hiển thị nội dung tìm kiếm ngay
         if (!panel) {
             createPanel();
-            // bỏ qua uiHidden – luôn hiển thị panel khi mới vào trang
             panel.classList.remove('hidden');
             uiHidden = false;
-            document.getElementById('vtv-ult-mini-btn').style.display = 'none';
+            const mini = document.getElementById('vtv-ult-mini-btn');
+            if (mini) mini.style.display = 'none';
         }
-        // Luôn hiển thị giao diện "đang tìm" sau khi panel sẵn sàng
         if (!uiHidden) renderSearching();
 
         channelName = await waitForChannel();
@@ -119,7 +117,6 @@
         const genres = detectGenres(desc);
         updateSeriesStats(seriesKey, videoEl?.duration || 0);
 
-        // Cache virtual playlist
         if (!cachedVirtualPlaylist || (Date.now() - cachedVirtualPlaylist.timestamp > 3600000)) {
             log('Building virtual playlist...');
             const vplist = await buildVirtualPlaylist(info.series);
@@ -172,6 +169,9 @@
         setTimeout(optimizeConnection, 2000);
         mainRunning = false;
     }
+
+    // Expose main globally to avoid ReferenceError
+    window.main = main;
 
     function onNavigate() {
         if (location.pathname !== '/watch') return;

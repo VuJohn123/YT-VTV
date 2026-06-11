@@ -1,5 +1,7 @@
-// smart-features.js - Voice Control (nâng cấp), GIF, Watch Later, Full Replace, Notes, Age Bypass, Scroll Playlist
+// smart-features.js - Voice Control (sửa lỗi gộp lệnh, giảm clear time)
 let voicePausedVideo = false;
+let lastInterim = '';
+let interimTimer = null;
 
 function initVoiceControl() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
@@ -15,7 +17,6 @@ function initVoiceControl() {
     voiceRecognition.maxAlternatives = 3;
     
     voiceRecognition.onstart = () => {
-        // Tạm dừng video để tránh âm thanh lọt vào micro
         if (videoEl && !videoEl.paused) {
             videoEl.pause();
             voicePausedVideo = true;
@@ -30,6 +31,7 @@ function initVoiceControl() {
             for (let j = 1; j < e.results[i].length; j++) {
                 if (e.results[i][j].confidence > best.confidence) best = e.results[i][j];
             }
+            if (best.confidence < 0.6) continue;
             if (e.results[i].isFinal) {
                 finalTranscript += best.transcript;
             } else {
@@ -38,15 +40,24 @@ function initVoiceControl() {
         }
         const transcript = finalTranscript || interimTranscript;
         if (transcript) {
-            if (typeof updateVoiceLabel === 'function') updateVoiceLabel(transcript);
             const t = transcript.toLowerCase().trim();
-            log('Voice raw result:', transcript, 'final:', !!finalTranscript);
-            // Execute command if final or clear command pattern
-            if (finalTranscript || /tua\s+\d+|tiếp theo|quay lại|dừng|phát|marathon|audio mode|pip/i.test(t)) {
-                processVoiceCommand(t);
-                resumeVideoAfterVoice();
-                // Clear label after 2s
-                setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
+            if (t.length < 80 && /tua\s+\d+|tiếp theo|quay lại|dừng|phát|marathon|audio mode|pip|tự động|like|dislike/i.test(t)) {
+                if (typeof updateVoiceLabel === 'function') updateVoiceLabel(t);
+                if (finalTranscript || /tua\s+\d+|tiếp theo|quay lại|dừng|phát|marathon|audio mode|pip/i.test(t)) {
+                    processVoiceCommand(t);
+                    resumeVideoAfterVoice();
+                    clearTimeout(interimTimer);
+                    interimTimer = setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 1500);
+                }
+                lastInterim = '';
+                try { voiceRecognition.abort(); } catch(e) {}
+                if (voiceEnabled) {
+                    try { voiceRecognition.start(); } catch(e) {}
+                }
+            } else {
+                if (typeof updateVoiceLabel === 'function') updateVoiceLabel(t);
+                clearTimeout(interimTimer);
+                interimTimer = setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
             }
         }
     };
@@ -55,24 +66,20 @@ function initVoiceControl() {
         warn('Voice error:', e.error);
         if (typeof updateVoiceLabel === 'function') updateVoiceLabel('Lỗi: ' + e.error);
         resumeVideoAfterVoice();
-        setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 3000);
+        setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
     };
     
     voiceRecognition.onend = () => {
-        log('Voice recognition ended');
         resumeVideoAfterVoice();
         if (typeof updateVoiceLabel === 'function') updateVoiceLabel('');
-        // Restart if voice is still enabled
         if (voiceEnabled) {
-            setTimeout(() => {
-                if (voiceEnabled) initVoiceControl();
-            }, 500);
+            setTimeout(() => { if (voiceEnabled) initVoiceControl(); }, 500);
         }
     };
     
     try {
         voiceRecognition.start();
-        log('Voice control started (native Vietnamese, auto-pause video)');
+        log('Voice control started (native Vietnamese, anti-accumulate)');
         if (typeof updateVoiceLabel === 'function') updateVoiceLabel('🎤 Đang nghe...');
         setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
     } catch (e) {
@@ -91,7 +98,6 @@ function resumeVideoAfterVoice() {
 function processVoiceCommand(t) {
     log('Processing voice command:', t);
     
-    // Ensure videoEl is available
     if (!videoEl) {
         videoEl = document.querySelector('video.html5-main-video');
         if (!videoEl) {
