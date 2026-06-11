@@ -2,7 +2,7 @@
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
 // @version      8.7
-// @description  Injected UI, voice label, fix tìm tập, audio mode & PiP sửa lỗi, mở rộng phát hiện tập thiếu, tối ưu mạng, cache search
+// @description  Fix panel không hiện, ngăn main() chạy 2 lần
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -37,18 +37,32 @@
     'use strict';
 
     let cachedVirtualPlaylist = null;
+    let mainRunning = false; // ngăn main chạy 2 lần
 
     async function main() {
+        if (mainRunning) return;
+        mainRunning = true;
         log('[Main] Starting main()');
         cancelRedirect();
         nextUrl = null; nextTitle = ''; previousEp = null; episodeList = [];
         adVideoDetected = false;
-        if (!panel) createPanel(); else if (!uiHidden) renderSearching();
+
+        // Luôn tạo panel nếu chưa có, và hiển thị nội dung tìm kiếm ngay
+        if (!panel) {
+            createPanel();
+            // bỏ qua uiHidden – luôn hiển thị panel khi mới vào trang
+            panel.classList.remove('hidden');
+            uiHidden = false;
+            document.getElementById('vtv-ult-mini-btn').style.display = 'none';
+        }
+        // Luôn hiển thị giao diện "đang tìm" sau khi panel sẵn sàng
+        if (!uiHidden) renderSearching();
 
         channelName = await waitForChannel();
         if (channelName !== TARGET_CHANNEL) {
             setTitle('❌ Sai kênh');
             setBody(`<div>${channelName || 'Không xác định'}</div>`);
+            mainRunning = false;
             return;
         }
 
@@ -60,6 +74,7 @@
             setTitle('⚠️ Video không khả dụng');
             setBody('<div>Video bị gỡ hoặc riêng tư.</div>');
             addToggles('vtv-panel-content');
+            mainRunning = false;
             return;
         }
 
@@ -76,6 +91,7 @@
             }
             addToggles('vtv-panel-content');
             setupMonitoring();
+            mainRunning = false;
             return;
         }
 
@@ -92,6 +108,7 @@
                 log('Next');
             } else {
                 renderOutOfOrder(info.episode, lastWatched + 1, stored.nextUrl);
+                mainRunning = false;
                 return;
             }
         }
@@ -153,6 +170,7 @@
         if (audioMode) enableAudioMode();
         if (pipEnabled) enableAutoPiP();
         setTimeout(optimizeConnection, 2000);
+        mainRunning = false;
     }
 
     function onNavigate() {
