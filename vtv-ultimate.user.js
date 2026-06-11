@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
-// @version      8.6
+// @version      8.7
 // @description  Injected UI, voice label, fix tìm tập, audio mode & PiP sửa lỗi, mở rộng phát hiện tập thiếu, tối ưu mạng, cache search
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
