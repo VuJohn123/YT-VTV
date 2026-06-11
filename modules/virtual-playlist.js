@@ -45,7 +45,7 @@ async function fetchVideosFromPlaylist(playlistId) {
     const videos = [];
     let continuation = null;
     let attempts = 0;
-    const maxAttempts = 200; // tăng lên để lấy hết
+    const maxAttempts = 200;
 
     async function fetchContinuation(token) {
         const resp = await fetch('https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8', {
@@ -155,7 +155,6 @@ async function buildVirtualPlaylist(seriesName) {
         const videos = await fetchVideosFromPlaylist(pl.playlistId);
         allVideos = allVideos.concat(videos);
     }
-    // Loại bỏ trùng lặp
     const seen = new Set();
     const unique = [];
     for (const v of allVideos) {
@@ -164,7 +163,6 @@ async function buildVirtualPlaylist(seriesName) {
             unique.push(v);
         }
     }
-    // Sắp xếp
     unique.sort((a, b) => {
         const pa = parseTitle(a.title);
         const pb = parseTitle(b.title);

@@ -1,9 +1,12 @@
-// utils.js - Biến toàn cục, parseTitle cache, suggestMissingSegments, countdown
+// utils.js - Biến toàn cục, parseTitle (chuẩn hóa series), suggestMissingSegments, countdown, cache search toàn cục
 const DEBUG = true;
 const TARGET_CHANNEL = 'VTV Giải Trí Official';
 const AD_MAX_DURATION = 30;
 const EPISODES_TO_SHOW = 5;
 const INCLUDE_CHANNEL_IN_SEARCH = true;
+
+const searchCache = new Map();
+const SEARCH_CACHE_TTL = 30 * 60 * 1000;
 
 let autoPlay = GM_getValue('vtvUlt_auto', true);
 let marathon = GM_getValue('vtvUlt_marathon', false);
@@ -34,9 +37,21 @@ const log = (...a) => DEBUG && console.log('[VTV Ult]', ...a);
 const warn = (...a) => DEBUG && console.warn('[VTV Ult]', ...a);
 function escapeHTML(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-const titleCache = new Map();
+// Override searchYT toàn cục với cache
+const originalSearchYT = searchYT;
+searchYT = async function(query) {
+    const key = query.toLowerCase().trim();
+    const cached = searchCache.get(key);
+    if (cached && (Date.now() - cached.timestamp < SEARCH_CACHE_TTL)) {
+        log('Search cache hit:', query);
+        return cached.data;
+    }
+    const results = await originalSearchYT(query);
+    searchCache.set(key, { data: results, timestamp: Date.now() });
+    return results;
+};
+
 function parseTitle(rawTitle) {
-    if (titleCache.has(rawTitle)) return titleCache.get(rawTitle);
     log('Parsing title:', rawTitle);
     let t = rawTitle.replace(/\s*-\s*YouTube$/i, '').trim();
     const r = { series: '', season: null, episode: null, segment: null, totalSeg: null, format: 'full' };
@@ -70,13 +85,14 @@ function parseTitle(rawTitle) {
         }
     }
 
+    // Chuẩn hóa series: loại bỏ phần season ở cuối (ví dụ "Thương ngày nắng về p2" -> "Thương ngày nắng về")
+    r.series = r.series.replace(/^(.*?)\s*(?:-?\s*(?:P\d+|Phần\s*\d+))\s*$/i, '$1').trim();
     r.series = r.series.replace(/(?:FULL|Full|Shorts|Preview|Trailer|Trực tiếp|TRỰC TIẾP)/gi, '').trim()
         .replace(/\|\s*VTV Giải Trí\s*$/i, '').replace(/\s*\|\s*/g, ' - ').trim();
     if (!r.series && r.episode) {
         const parts = t.split('|');
         r.series = parts[0].trim();
     }
-    titleCache.set(rawTitle, r);
     log('Parsed result:', r);
     return r;
 }
@@ -117,17 +133,9 @@ function cancelRedirect() {
         if (cd) cd.textContent = '';
     }
 }
-
-function doRedirect() {
-    if (nextUrl && !adVideoDetected) {
-        log('Redirecting to:', nextUrl);
-        window.location.href = nextUrl;
-    }
-}
-
+function doRedirect() { if (nextUrl && !adVideoDetected) window.location.href = nextUrl; }
 function startCountdown(sec) {
     if (!autoPlay || !nextUrl || adVideoDetected) return;
-    log('Countdown started:', sec);
     redirectScheduled = true;
     const cd = document.getElementById('vtv-cd');
     if (cd) cd.textContent = `⏳ ${sec}s`;
@@ -137,15 +145,10 @@ function startCountdown(sec) {
     let rem = sec;
     countdownInterval = setInterval(() => {
         rem--;
-        if (rem <= 0) {
-            clearInterval(countdownInterval);
-            doRedirect();
-        } else {
-            if (cd) cd.textContent = `⏳ ${rem}s`;
-        }
+        if (rem <= 0) { clearInterval(countdownInterval); doRedirect(); }
+        else if (cd) cd.textContent = `⏳ ${rem}s`;
     }, 1000);
 }
-
 function getAdaptiveThreshold() {
     if (!videoEl?.duration || videoEl.duration < AD_MAX_DURATION) return 0;
     return Math.max(5, Math.min(30, Math.floor(videoEl.duration * 0.03)));

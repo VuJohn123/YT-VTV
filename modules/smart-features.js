@@ -160,7 +160,7 @@ function stopVoiceControl() {
     if (voiceRecognition) { voiceRecognition.stop(); voiceRecognition = null; log('Voice control stopped'); }
 }
 
-// ========== BYPASS AGE RESTRICTION (đa phương thức mạnh mẽ) ==========
+// ========== BYPASS AGE RESTRICTION ==========
 async function bypassAgeRestriction(videoId) {
     const methods = [
         { name: 'Embed (YouTube)', url: `https://www.youtube.com/embed/${videoId}?autoplay=1` },
