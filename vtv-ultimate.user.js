@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
-// @version      8.2
-// @description  Injected UI, voice label, fix tìm tập, audio mode & PiP sửa lỗi, mở rộng phát hiện tập thiếu
+// @version      8.3
+// @description  Injected UI, voice label, fix tìm tập, audio mode & PiP sửa lỗi, mở rộng phát hiện tập thiếu, tối ưu mạng
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -27,6 +27,7 @@
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/virtual-playlist.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/stats.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/missing-detector.js
+// @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/network-optimizer.js
 // @updateURL    https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/vtv-ultimate.user.js
 // @downloadURL  https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/vtv-ultimate.user.js
 // @run-at       document-end
@@ -142,6 +143,8 @@
         if (voiceEnabled) startVoiceControl();
         if (audioMode) enableAudioMode();
         if (pipEnabled) enableAutoPiP();
+        // Tối ưu mạng
+        setTimeout(optimizeConnection, 2000);
     }
 
     function onNavigate() {

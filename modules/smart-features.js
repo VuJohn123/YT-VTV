@@ -10,7 +10,7 @@ function initVoiceControl() {
     voiceRecognition = new SR();
     voiceRecognition.lang = 'vi-VN';
     voiceRecognition.continuous = true;
-    voiceRecognition.interimResults = true; // Bật interim để thấy kết quả tạm thời
+    voiceRecognition.interimResults = true;
     
     voiceRecognition.onresult = (e) => {
         let finalTranscript = '';
@@ -59,10 +59,8 @@ function initVoiceControl() {
 
 function processVoiceCommand(t) {
     log('Voice command:', t);
-    // Điều hướng
     if (t.includes('tiếp theo') || t.includes('next')) { if (nextUrl) window.location.href = nextUrl; }
     else if (t.includes('quay lại') || t.includes('back')) { if (previousEp?.url) window.location.href = previousEp.url; }
-    // Tua chính xác
     else if (t.includes('tua đến phút') || t.includes('tua đến') || t.includes('đến phút')) {
         const patterns = [/(\d+)\s*phút\s*(\d+)\s*giây/, /(\d+):(\d+)/, /phút\s*(\d+)/, /(\d+)\s*giây/];
         let target = null;
@@ -76,7 +74,6 @@ function processVoiceCommand(t) {
         }
         if (target !== null && videoEl) videoEl.currentTime = Math.min(videoEl.duration, target);
     }
-    // Tua thêm / lùi
     else if (t.includes('tua thêm') || t.includes('tiến')) {
         const m = t.match(/(\d+)/); const val = m ? parseInt(m[1]) : 30;
         if (videoEl) videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + val);
@@ -85,23 +82,18 @@ function processVoiceCommand(t) {
         const m = t.match(/(\d+)/); const val = m ? parseInt(m[1]) : 10;
         if (videoEl) videoEl.currentTime = Math.max(0, videoEl.currentTime - val);
     }
-    // Điều khiển phát
     else if (t.includes('dừng') || t.includes('tạm dừng')) { if (videoEl) videoEl.pause(); }
     else if (t.includes('tiếp tục') || t.includes('phát')) { if (videoEl) videoEl.play(); }
-    // Âm lượng
     else if (t.includes('âm lượng')) {
         const m = t.match(/(\d+)/);
         if (m && videoEl) videoEl.volume = Math.min(1, parseInt(m[1]) / 100);
     }
-    // Toggle
     else if (t.includes('marathon')) { marathon = !marathon; GM_setValue('vtvUlt_marathon', marathon); }
     else if (t.includes('audio mode')) { audioMode = !audioMode; GM_setValue('vtvUlt_audioMode', audioMode); if (audioMode) enableAudioMode(); else disableAudioMode(); }
 }
 
 function startVoiceControl() {
-    if (voiceRecognition) {
-        try { voiceRecognition.abort(); } catch(e) {}
-    }
+    if (voiceRecognition) { try { voiceRecognition.abort(); } catch(e) {} }
     initVoiceControl();
 }
 
