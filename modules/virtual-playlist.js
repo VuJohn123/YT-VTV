@@ -1,4 +1,4 @@
-// virtual-playlist.js - Lấy toàn bộ video từ playlist của series, sắp xếp đúng thứ tự
+// virtual-playlist.js - Lấy toàn bộ video từ playlist của series, sắp xếp chuẩn
 
 async function fetchPlaylistsForSeries(seriesName) {
     const query = `${seriesName} playlist`;
@@ -30,64 +30,122 @@ async function fetchPlaylistsForSeries(seriesName) {
 
 async function fetchVideosFromPlaylist(playlistId) {
     const videos = [];
-    let nextPageToken = null;
+    let continuation = null;
     let attempts = 0;
-    const maxAttempts = 10; // Tránh vòng lặp vô hạn
-    do {
-        try {
-            let url = `https://www.youtube.com/playlist?list=${playlistId}`;
-            if (nextPageToken) url += `&index=${nextPageToken}`;
-            const resp = await fetch(url);
-            const html = await resp.text();
-            const m = html.match(/var ytInitialData\s*=\s*({.*?});/s);
-            if (!m) break;
-            const data = JSON.parse(m[1]);
-            // Trích xuất video
+    const maxAttempts = 50; // An toàn, tránh vòng lặp vô hạn
+
+    // Hàm gửi request POST tới YouTube API để lấy tiếp tục
+    async function fetchWithContinuation(token) {
+        const apiUrl = 'https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+        const body = {
+            context: {
+                client: {
+                    clientName: 'WEB',
+                    clientVersion: '2.20250610.00.00'
+                }
+            },
+            continuation: token
+        };
+        const resp = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        return resp.json();
+    }
+
+    try {
+        // Lần đầu: load trang playlist
+        let url = `https://www.youtube.com/playlist?list=${playlistId}`;
+        let resp = await fetch(url);
+        let html = await resp.text();
+        let m = html.match(/var ytInitialData\s*=\s*({.*?});/s);
+        if (!m) return videos;
+        let data = JSON.parse(m[1]);
+
+        // Lấy video từ dữ liệu ban đầu
+        const extractVideos = (data) => {
             const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs;
-            if (tabs) {
-                for (const tab of tabs) {
-                    const contents = tab?.tabRenderer?.content?.sectionListRenderer?.contents;
-                    if (contents) {
-                        for (const sec of contents) {
-                            const items = sec?.itemSectionRenderer?.contents?.[0]?.playlistVideoListRenderer?.contents;
-                            if (items) {
-                                for (const item of items) {
-                                    const vr = item?.playlistVideoRenderer;
-                                    if (vr && vr.videoId) {
-                                        videos.push({
-                                            title: vr.title?.runs?.[0]?.text || '',
-                                            videoId: vr.videoId
-                                        });
-                                    }
+            if (!tabs) return { videos: [], continuation: null };
+            for (const tab of tabs) {
+                const contents = tab?.tabRenderer?.content?.sectionListRenderer?.contents;
+                if (contents) {
+                    for (const sec of contents) {
+                        const items = sec?.itemSectionRenderer?.contents?.[0]?.playlistVideoListRenderer?.contents;
+                        if (items) {
+                            for (const item of items) {
+                                const vr = item?.playlistVideoRenderer;
+                                if (vr && vr.videoId) {
+                                    videos.push({
+                                        title: vr.title?.runs?.[0]?.text || '',
+                                        videoId: vr.videoId
+                                    });
                                 }
                             }
                         }
                     }
                 }
             }
-            // Lấy continuation token
+            // Tìm continuation token
             const continuations = data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.continuations;
             if (continuations?.[0]?.nextContinuationData?.continuation) {
-                nextPageToken = continuations[0].nextContinuationData.continuation;
-            } else {
-                nextPageToken = null;
+                return { videos, continuation: continuations[0].nextContinuationData.continuation };
+            }
+            return { videos, continuation: null };
+        };
+
+        let result = extractVideos(data);
+        continuation = result.continuation;
+        attempts++;
+
+        // Tiếp tục lấy các trang sau qua API
+        while (continuation && attempts < maxAttempts) {
+            const nextData = await fetchWithContinuation(continuation);
+            if (!nextData) break;
+            // Lấy video từ response tiếp tục
+            const onResponseActions = nextData?.onResponseReceivedActions;
+            if (onResponseActions) {
+                for (const action of onResponseActions) {
+                    const items = action?.appendContinuationItemsAction?.continuationItems;
+                    if (items) {
+                        for (const item of items) {
+                            const vr = item?.playlistVideoRenderer;
+                            if (vr && vr.videoId) {
+                                videos.push({
+                                    title: vr.title?.runs?.[0]?.text || '',
+                                    videoId: vr.videoId
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            // Lấy continuation mới
+            continuation = null;
+            const nextContinuation = nextData?.responseContext?.serviceTrackingParams?.[0]?.params?.[0]?.value;
+            // Thực tế cần parse từ response, nhưng thường không có. Ta dùng cách khác: lấy từ request tiếp theo nếu có.
+            // Đơn giản hóa: ta sẽ dừng nếu không có thêm video nào sau khi gọi.
+            // Ta có thể tìm trong onResponseReceivedActions phần continuation.
+            if (onResponseActions) {
+                for (const action of onResponseActions) {
+                    const cont = action?.appendContinuationItemsAction?.continuation;
+                    if (cont) continuation = cont;
+                }
             }
             attempts++;
-        } catch(e) {
-            warn(`Error fetching playlist ${playlistId}:`, e);
-            break;
         }
-    } while (nextPageToken && attempts < maxAttempts);
+    } catch(e) {
+        warn('Error fetching playlist videos:', e);
+    }
+    log(`Fetched ${videos.length} videos from playlist ${playlistId}`);
     return videos;
 }
 
 async function buildVirtualPlaylist(seriesName) {
-    // Kiểm tra cache trước (lưu trong storage)
     const cacheKey = 'vtvUlt_virtual_' + seriesName.replace(/\s+/g, '_');
     const cached = GM_getValue(cacheKey, null);
     if (cached) {
         const data = JSON.parse(cached);
-        // Dùng cache trong 1 giờ
         if (Date.now() - data.timestamp < 3600000) {
             log('Using cached virtual playlist for', seriesName);
             return data.videos;
@@ -97,14 +155,13 @@ async function buildVirtualPlaylist(seriesName) {
     log('Building virtual playlist for', seriesName);
     const playlists = await fetchPlaylistsForSeries(seriesName);
     let allVideos = [];
-    // Lấy video từ từng playlist, ưu tiên playlist có nhiều video nhất (thường là playlist chính)
     playlists.sort((a, b) => b.videoCount - a.videoCount);
     for (const pl of playlists) {
         const videos = await fetchVideosFromPlaylist(pl.playlistId);
         log(`Fetched ${videos.length} videos from playlist: ${pl.title}`);
         allVideos = allVideos.concat(videos);
     }
-    // Loại bỏ trùng lặp videoId
+    // Loại bỏ trùng lặp
     const seen = new Set();
     const unique = [];
     for (const v of allVideos) {
@@ -124,7 +181,6 @@ async function buildVirtualPlaylist(seriesName) {
         return (pa.segment || 0) - (pb.segment || 0);
     });
     log(`Virtual playlist built: ${unique.length} unique videos`);
-    // Lưu cache
     GM_setValue(cacheKey, JSON.stringify({ videos: unique, timestamp: Date.now() }));
     return unique;
 }
