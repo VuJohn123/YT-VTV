@@ -21,11 +21,14 @@ async function findNext(info, channel) {
 
     let candidates = r.filter(v => {
         const p = parseTitle(v.title);
-        return p && p.series === info.series && p.episode === nextEp && (info.season ? p.season === info.season : !p.season);
+        if (!p || p.series !== info.series || p.episode !== nextEp) return false;
+        // Cho phép season khớp hoặc season của video là null (không xác định)
+        if (info.season && p.season !== null && p.season !== info.season) return false;
+        return true;
     });
 
     if (candidates.length === 0 && episodeList.length > 0) {
-        const found = episodeList.filter(e => e.episode === nextEp && (info.season ? e.season === info.season : true));
+        const found = episodeList.filter(e => e.episode === nextEp && (info.season ? e.season === info.season || e.season === null : true));
         if (found.length) {
             found.sort((a, b) => (a.segment || 0) - (b.segment || 0));
             return {url: found[0].url, title: found[0].title, source:'virtual'};
@@ -63,10 +66,12 @@ async function findPrevious(info, channel) {
     if (channel && r.length === 0) r = await searchYT(baseTitle);
     const candidates = r.filter(v => {
         const p = parseTitle(v.title);
-        return p && p.series === info.series && p.episode === pe && (info.season ? p.season === info.season : !p.season);
+        if (!p || p.series !== info.series || p.episode !== pe) return false;
+        if (info.season && p.season !== null && p.season !== info.season) return false;
+        return true;
     });
     if (candidates.length === 0) {
-        const found = episodeList.filter(e => e.episode === pe && (info.season ? e.season === info.season : true));
+        const found = episodeList.filter(e => e.episode === pe && (info.season ? e.season === info.season || e.season === null : true));
         if (found.length) {
             found.sort((a, b) => (b.segment || 0) - (a.segment || 0));
             return {url: found[0].url, title: found[0].title, episode: pe};
@@ -105,7 +110,8 @@ async function findEpisodeList(info, channel, virtualPlaylistData) {
             const p = parseTitle(vid.title);
             if (!p || !p.episode) continue;
             if (p.series !== info.series) continue;
-            if (info.season && p.season !== info.season) continue;
+            // Chỉ loại bỏ nếu season được xác định rõ ràng và khác với season hiện tại
+            if (info.season && p.season !== null && p.season !== info.season) continue;
             list.push({
                 videoId: vid.videoId,
                 episode: p.episode,
@@ -134,7 +140,9 @@ async function findEpisodeList(info, channel, virtualPlaylistData) {
                 const results = await searchYT(mk(q));
                 const valid = results.filter(v => {
                     const p = parseTitle(v.title);
-                    return p && p.series === info.series && p.episode === ep && (info.season ? p.season === info.season : !p.season);
+                    if (!p || p.series !== info.series || p.episode !== ep) return false;
+                    if (info.season && p.season !== null && p.season !== info.season) return false;
+                    return true;
                 });
                 addVideos(valid);
             }
