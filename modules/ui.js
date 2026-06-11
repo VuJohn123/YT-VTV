@@ -72,6 +72,10 @@ GM_addStyle(`
     }
     #vtv-ult-panel .episode-list a:hover { background: #444; text-decoration: none; }
     #vtv-ult-panel .episode-list a.current { background: #555; color: #fff; font-weight: bold; }
+    #vtv-voice-label {
+        font-size: 11px; color: #aaa; margin-left: 8px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        display: inline-block; vertical-align: middle;
+    }
 `);
 
 function createPanel() {
@@ -183,7 +187,10 @@ function addToggles(cid) {
         <div class="auto-toggle"><label><input type="checkbox" id="vtv-auto" ${autoPlay ? 'checked' : ''}> Tự động chuyển</label></div>
         <div class="marathon-toggle"><label><input type="checkbox" id="vtv-marathon" ${marathon ? 'checked' : ''}> Marathon</label></div>
         <div class="autoskip-toggle"><label><input type="checkbox" id="vtv-autoskip" ${autoSkip ? 'checked' : ''}> Tự động tua intro</label></div>
-        <div class="voice-toggle"><label><input type="checkbox" id="vtv-voice" ${voiceEnabled ? 'checked' : ''}> Voice Control 🎤</label></div>
+        <div class="voice-toggle">
+            <label><input type="checkbox" id="vtv-voice" ${voiceEnabled ? 'checked' : ''}> Voice Control 🎤</label>
+            <span id="vtv-voice-label"></span>
+        </div>
         <div class="audio-toggle"><label><input type="checkbox" id="vtv-audio-mode" ${audioMode ? 'checked' : ''}> Audio Mode 🔇</label></div>
         <div class="pip-toggle"><label><input type="checkbox" id="vtv-pip" ${pipEnabled ? 'checked' : ''}> Auto PiP 🖼️</label></div>
     `;
@@ -310,4 +317,13 @@ function onSeeked() {
 }
 function onVideoEnded() {
     if (autoPlay && nextUrl && !adVideoDetected) { cancelRedirect(); doRedirect(); }
+}
+
+// Hàm cập nhật label voice (được gọi từ smart-features.js)
+function updateVoiceLabel(text) {
+    const label = document.getElementById('vtv-voice-label');
+    if (label) {
+        label.textContent = text || '';
+        label.title = text || '';
+    }
 }

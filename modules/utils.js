@@ -1,3 +1,4 @@
+// utils.js - Biến toàn cục & hàm dùng chung
 const DEBUG = true;
 const TARGET_CHANNEL = 'VTV Giải Trí Official';
 const AD_MAX_DURATION = 30;
@@ -10,13 +11,19 @@ let autoSkip = GM_getValue('vtvUlt_autoskip', false);
 let nextUrl = null, nextTitle = '';
 let previousEp = null, episodeList = [];
 let countdownInterval = null, redirectScheduled = false;
-let videoEl, panel, channelName = '', lastVid, seriesKey, parsedInfo;
+let timeCheckInterval = null;
+let videoEl = null;
+let panel = null;
+let channelName = '';
+let lastVid = null;
+let seriesKey = null;
+let parsedInfo = null;
 let uiCollapsed = GM_getValue('vtvUlt_collapsed', false);
 let uiHidden = GM_getValue('vtvUlt_hidden', false);
 let currentProfile = GM_getValue('vtvUlt_currentProfile', 'default');
 let panelPos = GM_getValue('vtvUlt_panelPos', null);
 let voiceRecognition = null;
-let adObserver, adSkipInterval, adVideoDetected = false;
+let adObserver = null, adSkipInterval = null, adVideoDetected = false;
 let vtvLastTime = -1;
 let voiceEnabled = GM_getValue('vtvUlt_voice', true);
 let audioMode = GM_getValue('vtvUlt_audioMode', false);
@@ -96,25 +103,44 @@ function suggestMissingSegments(list) {
     return missing;
 }
 
-// Countdown functions (tách từ ui.js)
+// === Countdown functions ===
 function cancelRedirect() {
     redirectScheduled = false;
     if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
-    if (typeof sendToPopup === 'function') sendToPopup({ action: 'updateCountdown', sec: 0 });
+    // Ẩn nút hủy và đồng hồ đếm ngược (nếu panel đang hiển thị)
+    if (panel) {
+        const cancelBtn = document.getElementById('vtv-cancel');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        const cd = document.getElementById('vtv-cd');
+        if (cd) cd.textContent = '';
+    }
 }
+
 function doRedirect() {
-    if (nextUrl && !adVideoDetected) window.location.href = nextUrl;
+    if (nextUrl && !adVideoDetected) {
+        log('Redirecting to:', nextUrl);
+        window.location.href = nextUrl;
+    }
 }
+
 function startCountdown(sec) {
     if (!autoPlay || !nextUrl || adVideoDetected) return;
+    log('Countdown started:', sec);
     redirectScheduled = true;
-    if (typeof sendToPopup === 'function') sendToPopup({ action: 'startCountdown', sec });
+    const cd = document.getElementById('vtv-cd');
+    if (cd) cd.textContent = `⏳ ${sec}s`;
+    const cancelBtn = document.getElementById('vtv-cancel');
+    if (cancelBtn) cancelBtn.style.display = 'inline-block';
     if (countdownInterval) clearInterval(countdownInterval);
     let rem = sec;
     countdownInterval = setInterval(() => {
         rem--;
-        if (rem <= 0) { clearInterval(countdownInterval); doRedirect(); }
-        else { if (typeof sendToPopup === 'function') sendToPopup({ action: 'updateCountdown', sec: rem }); }
+        if (rem <= 0) {
+            clearInterval(countdownInterval);
+            doRedirect();
+        } else {
+            if (cd) cd.textContent = `⏳ ${rem}s`;
+        }
     }, 1000);
 }
 

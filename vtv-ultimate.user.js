@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
-// @version      8.1
-// @description  Injected UI, voice nâng cấp, fix tìm tập. Marathon, PiP, audio mode...
+// @version      8.2
+// @description  Injected UI, voice label, fix tìm tập, audio mode & PiP sửa lỗi, mở rộng phát hiện tập thiếu
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
