@@ -1,10 +1,11 @@
-// episode-navigator.js - Tìm tập tiếp theo, trước đó, danh sách (có cache virtual playlist)
+// episode-navigator.js - Tìm tập tiếp theo, trước đó, danh sách (tối ưu merge virtual playlist)
 const MAX_EPISODES_IN_LIST = 10;
 
 async function findNext(info, channel) {
     const mk = (exact) => (INCLUDE_CHANNEL_IN_SEARCH && channel) ? `${exact} ${channel}` : exact;
     const partStr = info.season ? ` - P${info.season}` : '';
 
+    // Nếu còn phân đoạn trong cùng tập → tìm segment tiếp theo
     if (info.segment && info.totalSeg && info.segment < info.totalSeg) {
         const segTitle = `${info.series} tập ${info.episode}${partStr} (${info.segment + 1}/${info.totalSeg})`;
         let r = await searchYT(mk(segTitle));
@@ -14,6 +15,7 @@ async function findNext(info, channel) {
         return null;
     }
 
+    // Tìm tập tiếp theo
     const nextEp = info.episode + 1;
     const baseTitle = `${info.series} tập ${nextEp}${partStr}`;
     let r = await searchYT(mk(baseTitle));
@@ -24,7 +26,15 @@ async function findNext(info, channel) {
         return p && p.series === info.series && p.episode === nextEp && (info.season ? p.season === info.season : !p.season);
     });
 
+    // Fallback: dùng virtual playlist nếu có
     if (candidates.length === 0 && episodeList.length > 0) {
+        // Tìm trong episodeList (đã có sẵn)
+        const found = episodeList.filter(e => e.episode === nextEp && (info.season ? e.season === info.season : true));
+        if (found.length) {
+            found.sort((a, b) => (a.segment || 0) - (b.segment || 0));
+            return {url: found[0].url, title: found[0].title, source:'virtual'};
+        }
+        // Suy luận phân đoạn thiếu
         const missing = suggestMissingSegments(episodeList);
         const nextMissing = missing.find(m => m.episode === nextEp && m.segment === 1);
         if (nextMissing) {
@@ -36,6 +46,7 @@ async function findNext(info, channel) {
     }
 
     if (candidates.length === 0) {
+        // Cross-season
         if (info.season) {
             const ns = info.season + 1;
             const ct = `${info.series} tập 1 - P${ns} (1/${info.totalSeg || 1})`;
@@ -46,6 +57,7 @@ async function findNext(info, channel) {
         return null;
     }
 
+    // Ưu tiên segment nhỏ nhất
     candidates.sort((a, b) => {
         const pa = parseTitle(a.title);
         const pb = parseTitle(b.title);
@@ -68,7 +80,15 @@ async function findPrevious(info, channel) {
         const p = parseTitle(v.title);
         return p && p.series === info.series && p.episode === pe && (info.season ? p.season === info.season : !p.season);
     });
-    if (candidates.length === 0) return null;
+    if (candidates.length === 0) {
+        // Tìm trong episodeList
+        const found = episodeList.filter(e => e.episode === pe && (info.season ? e.season === info.season : true));
+        if (found.length) {
+            found.sort((a, b) => (b.segment || 0) - (a.segment || 0));
+            return {url: found[0].url, title: found[0].title, episode: pe};
+        }
+        return null;
+    }
     candidates.sort((a, b) => {
         const pa = parseTitle(a.title);
         const pb = parseTitle(b.title);
@@ -80,28 +100,38 @@ async function findPrevious(info, channel) {
 
 async function findEpisodeList(info, channel, virtualPlaylistData) {
     const list = [];
-    const mk = (exact) => (INCLUDE_CHANNEL_IN_SEARCH && channel) ? `${exact} ${channel}` : exact;
     const ce = info.episode;
     const partStr = info.season ? ` - P${info.season}` : '';
 
+    // Luôn thêm tập hiện tại
     const currentTitle = document.querySelector('h1.ytd-watch-metadata yt-formatted-string')?.textContent?.trim() || `Tập ${ce}`;
     list.push({ episode: ce, url: location.href, title: currentTitle, isCurrent: true, segment: info.segment || 0, totalSeg: info.totalSeg || 1 });
 
-    if (virtualPlaylistData && virtualPlaylistData.length > 0) {
-        for (const vid of virtualPlaylistData) {
+    // Hàm thêm video từ mảng, không trùng lặp
+    const addVideos = (videos) => {
+        for (const vid of videos) {
             const p = parseTitle(vid.title);
-            if (p && p.series === info.series && p.episode) {
-                list.push({
-                    episode: p.episode,
-                    url: `https://youtu.be/${vid.videoId}`,
-                    title: vid.title,
-                    isCurrent: (p.episode === ce && (p.segment || 0) === (info.segment || 0)),
-                    segment: p.segment || 0,
-                    totalSeg: p.totalSeg || 1
-                });
-            }
+            if (!p || !p.episode) continue;
+            // Chỉ thêm nếu cùng series và (không có season hoặc khớp season)
+            if (p.series !== info.series) continue;
+            if (info.season && p.season !== info.season) continue;
+            list.push({
+                episode: p.episode,
+                url: `https://youtu.be/${vid.videoId}`,
+                title: vid.title,
+                isCurrent: (p.episode === ce && (p.segment || 0) === (info.segment || 0)),
+                segment: p.segment || 0,
+                totalSeg: p.totalSeg || 1
+            });
         }
+    };
+
+    // 1. Thêm từ virtual playlist (đã đầy đủ, đã sắp xếp)
+    if (virtualPlaylistData && virtualPlaylistData.length > 0) {
+        addVideos(virtualPlaylistData);
     } else {
+        // 2. Nếu không có virtual, tìm kiếm thủ công (giới hạn phạm vi)
+        const mk = (exact) => (INCLUDE_CHANNEL_IN_SEARCH && channel) ? `${exact} ${channel}` : exact;
         const startEp = Math.max(1, ce - 3);
         const endEp = ce + 12;
         for (let ep = startEp; ep <= endEp; ep++) {
@@ -117,24 +147,25 @@ async function findEpisodeList(info, channel, virtualPlaylistData) {
                     const p = parseTitle(v.title);
                     return p && p.series === info.series && p.episode === ep && (info.season ? p.season === info.season : !p.season);
                 });
-                for (const vid of valid) {
-                    const p = parseTitle(vid.title);
-                    list.push({ episode: ep, url: `https://youtu.be/${vid.videoId}`, title: vid.title, isCurrent: false, segment: p.segment || 0, totalSeg: p.totalSeg || 1 });
-                }
+                addVideos(valid);
             }
         }
     }
 
-    list.sort((a, b) => {
-        if (a.episode !== b.episode) return a.episode - b.episode;
-        return (a.segment || 0) - (b.segment || 0);
-    });
+    // Loại bỏ trùng lặp (cùng episode + segment) và sắp xếp
     const seen = new Set();
     const unique = [];
     for (const item of list) {
         const key = `${item.episode}_${item.segment || 0}`;
-        if (!seen.has(key)) { seen.add(key); unique.push(item); }
+        if (!seen.has(key)) {
+            seen.add(key);
+            unique.push(item);
+        }
     }
+    unique.sort((a, b) => {
+        if (a.episode !== b.episode) return a.episode - b.episode;
+        return (a.segment || 0) - (b.segment || 0);
+    });
     log(`Episode list: ${unique.length} episodes`);
     return unique;
 }
