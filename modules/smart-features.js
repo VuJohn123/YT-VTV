@@ -1,5 +1,4 @@
-// smart-features.js - Voice Control (sửa lỗi không thực thi), GIF, Watch Later, Full Replace, Notes, Age Bypass, Scroll Playlist
-
+// smart-features.js - Voice Control nâng cấp (xử lý mạnh mẽ, tự động clear label)
 function initVoiceControl() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
         warn('Trình duyệt không hỗ trợ Web Speech API');
@@ -13,14 +12,21 @@ function initVoiceControl() {
     voiceRecognition.interimResults = true;
     voiceRecognition.maxAlternatives = 3;
     
+    let lastInterim = '';
+    let interimTimer = null;
+    
     voiceRecognition.onresult = (e) => {
         let finalTranscript = '';
         let interimTranscript = '';
         for (let i = e.resultIndex; i < e.results.length; ++i) {
-            const best = e.results[i][0];
-            if (e.results[i].isFinal && best.confidence > 0.5) {
+            // Lấy kết quả tốt nhất (có confidence cao nhất)
+            let best = e.results[i][0];
+            for (let j = 1; j < e.results[i].length; j++) {
+                if (e.results[i][j].confidence > best.confidence) best = e.results[i][j];
+            }
+            if (e.results[i].isFinal) {
                 finalTranscript += best.transcript;
-            } else if (!e.results[i].isFinal) {
+            } else {
                 interimTranscript += best.transcript;
             }
         }
@@ -28,10 +34,20 @@ function initVoiceControl() {
         if (transcript) {
             if (typeof updateVoiceLabel === 'function') updateVoiceLabel(transcript);
             const t = transcript.toLowerCase().trim();
-            // Thực thi lệnh ngay cả khi chỉ có interim (sau 1.5 giây không thay đổi)
-            if (finalTranscript || interimTranscript.length > 3) {
+            // Xử lý lệnh ngay nếu là final hoặc interim đủ dài và ổn định
+            if (finalTranscript) {
                 processVoiceCommand(t);
-                setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
+                // Tự động clear label sau 2 giây
+                clearTimeout(interimTimer);
+                interimTimer = setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
+            } else if (interimTranscript && interimTranscript !== lastInterim) {
+                lastInterim = interimTranscript;
+                // Nếu interim chứa lệnh rõ ràng, thực thi ngay
+                if (/tua \d+ (giây|phút)|tua (đến|tới) \d+|tiếp theo|quay lại|dừng|phát|marathon|audio mode/i.test(t)) {
+                    processVoiceCommand(t);
+                    clearTimeout(interimTimer);
+                    interimTimer = setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
+                }
             }
         }
     };
@@ -63,95 +79,148 @@ function initVoiceControl() {
 function processVoiceCommand(t) {
     log('Voice command:', t);
     
+    // Chuẩn hóa: bỏ dấu câu thừa, thay thế từ đồng nghĩa
+    t = t.replace(/[.,?!]/g, '').replace(/\s+/g, ' ').trim();
+    
+    // ========== ĐIỀU HƯỚNG TẬP ==========
     if (/tiếp theo|tập sau|next/i.test(t)) {
         if (nextUrl) window.location.href = nextUrl;
+        return;
     }
-    else if (/quay lại|tập trước|back/i.test(t)) {
+    if (/quay lại|tập trước|back/i.test(t)) {
         if (previousEp?.url) window.location.href = previousEp.url;
+        return;
     }
-    else if (/tua đến|tua tới|đến phút|đến\b/i.test(t)) {
+    
+    // ========== TUA CHÍNH XÁC (đến vị trí cụ thể) ==========
+    if (/tua đến|tua tới|đến phút|đến\s+\d/i.test(t)) {
         const patterns = [
-            /(?:phút|phut)\s*(\d+)\s*(?:giây|giay)\s*(\d+)/,
-            /(\d+)\s*(?:phút|phut)\s*(\d+)\s*(?:giây|giay)/,
-            /(\d+):(\d+)/,
-            /(?:phút|phut)\s*(\d+)/,
-            /(\d+)\s*(?:giây|giay)/
+            /(\d+)\s*phút\s*(\d+)\s*giây/,
+            /(\d+)\s*:\s*(\d+)/,
+            /phút\s*(\d+)\s*giây\s*(\d+)/,
+            /phút\s*(\d+)/,
+            /(\d+)\s*giây/
         ];
-        let target = null;
         for (const p of patterns) {
             const m = t.match(p);
             if (m) {
-                if (m[2] !== undefined) target = parseInt(m[1]) * 60 + parseInt(m[2]);
-                else target = parseInt(m[1]) * (p.toString().includes('phút') ? 60 : 1);
-                break;
+                let target;
+                if (m[2] !== undefined) {
+                    target = parseInt(m[1]) * 60 + parseInt(m[2]);
+                } else {
+                    target = parseInt(m[1]) * (p.toString().includes('phút') ? 60 : 1);
+                }
+                if (target !== null && videoEl) {
+                    videoEl.currentTime = Math.min(videoEl.duration, target);
+                    log('Voice: seek to', target, 'seconds');
+                }
+                return;
             }
         }
-        if (target !== null && videoEl) videoEl.currentTime = Math.min(videoEl.duration, target);
     }
-    else if (/tua thêm|tua nhanh|tiến|tới/i.test(t)) {
+    
+    // ========== TUA THÊM (tua nhanh) ==========
+    if (/tua thêm|tua nhanh|tua\s+\d+|tiến\s+\d+|tới\s+\d+/i.test(t)) {
         let amount = 30;
         const m = t.match(/(\d+)\s*(phút|giây|s)/);
-        if (m) amount = parseInt(m[1]) * (m[2].includes('phút') ? 60 : 1);
+        if (m) {
+            amount = parseInt(m[1]);
+            if (m[2] && m[2].includes('phút')) amount *= 60;
+        }
         if (videoEl) {
             videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + amount);
             log('Voice: forward', amount, 'seconds');
         }
+        return;
     }
-    else if (/chậm lại|lùi|tua lại|tua lui/i.test(t)) {
+    
+    // ========== TUA LÙI ==========
+    if (/chậm lại|lùi\s+\d+|tua lại\s+\d+|tua lui\s+\d+/i.test(t)) {
         let amount = 10;
         const m = t.match(/(\d+)\s*(phút|giây|s)/);
-        if (m) amount = parseInt(m[1]) * (m[2].includes('phút') ? 60 : 1);
-        if (videoEl) videoEl.currentTime = Math.max(0, videoEl.currentTime - amount);
+        if (m) {
+            amount = parseInt(m[1]);
+            if (m[2] && m[2].includes('phút')) amount *= 60;
+        }
+        if (videoEl) {
+            videoEl.currentTime = Math.max(0, videoEl.currentTime - amount);
+            log('Voice: backward', amount, 'seconds');
+        }
+        return;
     }
-    else if (/dừng|tạm dừng|pause/i.test(t)) { if (videoEl) videoEl.pause(); }
-    else if (/tiếp tục|phát|play|chạy/i.test(t)) { if (videoEl) videoEl.play(); }
-    else if (/âm lượng|volume/i.test(t)) {
+    
+    // ========== ĐIỀU KHIỂN PHÁT ==========
+    if (/dừng|tạm dừng|pause/i.test(t)) { if (videoEl) videoEl.pause(); return; }
+    if (/tiếp tục|phát|play|chạy/i.test(t)) { if (videoEl) videoEl.play(); return; }
+    
+    // ========== ÂM LƯỢNG ==========
+    if (/âm lượng|volume/i.test(t)) {
         const m = t.match(/(\d+)/);
         if (m && videoEl) videoEl.volume = Math.min(1, parseInt(m[1]) / 100);
+        return;
     }
-    else if (/tắt tiếng|mute/i.test(t)) { if (videoEl) videoEl.volume = 0; }
-    else if (/bật tiếng|unmute/i.test(t)) { if (videoEl) videoEl.volume = 1; }
-    else if (/toàn màn hình|fullscreen/i.test(t)) {
+    if (/tắt tiếng|mute/i.test(t)) { if (videoEl) videoEl.volume = 0; return; }
+    if (/bật tiếng|unmute/i.test(t)) { if (videoEl) videoEl.volume = 1; return; }
+    
+    // ========== TOÀN MÀN HÌNH ==========
+    if (/toàn màn hình|fullscreen/i.test(t)) {
         const fsBtn = document.querySelector('.ytp-fullscreen-button');
         if (fsBtn) fsBtn.click();
+        return;
     }
-    else if (/thoát toàn màn hình/i.test(t)) {
+    if (/thoát toàn màn hình/i.test(t)) {
         if (document.fullscreenElement) document.exitFullscreen();
+        return;
     }
-    else if (/tăng tốc độ|nhanh hơn|speed up/i.test(t)) {
+    
+    // ========== TỐC ĐỘ PHÁT ==========
+    if (/tăng tốc độ|nhanh hơn|speed up/i.test(t)) {
         if (videoEl) videoEl.playbackRate = Math.min(2, videoEl.playbackRate + 0.25);
+        return;
     }
-    else if (/giảm tốc độ|chậm hơn|slow down/i.test(t)) {
+    if (/giảm tốc độ|chậm hơn|slow down/i.test(t)) {
         if (videoEl) videoEl.playbackRate = Math.max(0.25, videoEl.playbackRate - 0.25);
+        return;
     }
-    else if (/tốc độ bình thường|bình thường|normal speed/i.test(t)) {
+    if (/tốc độ bình thường|bình thường|normal speed/i.test(t)) {
         if (videoEl) videoEl.playbackRate = 1;
+        return;
     }
-    else if (/marathon/i.test(t)) {
+    
+    // ========== TOGGLE ==========
+    if (/marathon/i.test(t)) {
         marathon = !marathon; GM_setValue('vtvUlt_marathon', marathon);
         if (marathon) { document.body.classList.add('vtv-marathon'); if (typeof startAdBlocking === 'function') startAdBlocking(); }
         else { document.body.classList.remove('vtv-marathon'); if (typeof stopAdBlocking === 'function') stopAdBlocking(); }
+        return;
     }
-    else if (/audio mode|chế độ nghe/i.test(t)) {
+    if (/audio mode|chế độ nghe/i.test(t)) {
         audioMode = !audioMode; GM_setValue('vtvUlt_audioMode', audioMode);
         if (audioMode) { if (typeof enableAudioMode === 'function') enableAudioMode(); }
         else { if (typeof disableAudioMode === 'function') disableAudioMode(); }
+        return;
     }
-    else if (/pip|picture in picture/i.test(t)) {
+    if (/pip|picture in picture/i.test(t)) {
         pipEnabled = !pipEnabled; GM_setValue('vtvUlt_pip', pipEnabled);
         if (pipEnabled) { if (typeof enableAutoPiP === 'function') enableAutoPiP(); }
         else { if (typeof disableAutoPiP === 'function') disableAutoPiP(); }
+        return;
     }
-    else if (/tự động chuyển|auto next/i.test(t)) {
+    if (/tự động chuyển|auto next/i.test(t)) {
         autoPlay = !autoPlay; GM_setValue('vtvUlt_auto', autoPlay);
+        return;
     }
-    else if (/like|thích/i.test(t)) {
+    
+    // ========== LIKE / DISLIKE ==========
+    if (/like|thích/i.test(t)) {
         const likeBtn = document.querySelector('#top-level-buttons-computed yt-icon-button:first-child button');
         if (likeBtn) likeBtn.click();
+        return;
     }
-    else if (/dislike|không thích/i.test(t)) {
+    if (/dislike|không thích/i.test(t)) {
         const dislikeBtn = document.querySelector('#top-level-buttons-computed yt-icon-button:last-child button');
         if (dislikeBtn) dislikeBtn.click();
+        return;
     }
 }
 
@@ -162,101 +231,4 @@ function startVoiceControl() {
 
 function stopVoiceControl() {
     if (voiceRecognition) { voiceRecognition.stop(); voiceRecognition = null; log('Voice control stopped'); }
-}
-
-// ========== BYPASS AGE RESTRICTION ==========
-async function bypassAgeRestriction(videoId) {
-    const methods = [
-        { name: 'Embed (YouTube)', url: `https://www.youtube.com/embed/${videoId}?autoplay=1` },
-        { name: 'YouTube NoCookie', url: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1` },
-        { name: 'Invidious (snopyta)', url: `https://invidious.snopyta.org/watch?v=${videoId}` },
-        { name: 'Invidious (yewtu)', url: `https://yewtu.be/watch?v=${videoId}` },
-        { name: 'Piped', url: `https://piped.video/watch?v=${videoId}` },
-        { name: 'Piped (kavin)', url: `https://piped.kavin.rocks/watch?v=${videoId}` },
-        { name: 'CloudTube', url: `https://tube.cadence.moe/watch?v=${videoId}` }
-    ];
-    for (const method of methods) {
-        try {
-            const resp = await fetch(method.url, { method: 'HEAD' });
-            if (resp.ok) {
-                if (confirm(`Mở bằng: ${method.name}?`)) {
-                    window.location.href = method.url;
-                    return;
-                }
-            }
-        } catch(e) { continue; }
-    }
-    const choice = prompt('Chọn phương thức bypass:\n1. Embed (YouTube)\n2. Invidious\n3. Piped');
-    if (choice === '1') window.location.href = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
-    else if (choice === '2') window.location.href = `https://invidious.snopyta.org/watch?v=${videoId}`;
-    else if (choice === '3') window.location.href = `https://piped.video/watch?v=${videoId}`;
-}
-
-// ========== Các tiện ích khác ==========
-function addToWatchLater(url, title) {
-    let list = profileStore('watchLater', []);
-    if (!list.find(v => v.url === url)) {
-        list.push({url, title, added: Date.now()});
-        profileStore('watchLater', list);
-        GM_notification({text: 'Đã thêm vào Xem sau: ' + title, timeout: 2000});
-    }
-}
-
-function recordGIF() {
-    if (!videoEl?.captureStream) return alert('Không hỗ trợ quay video');
-    const stream = videoEl.captureStream();
-    const mr = new MediaRecorder(stream, {mimeType: 'video/webm'});
-    const chunks = [];
-    mr.ondataavailable = e => chunks.push(e.data);
-    mr.onstop = () => {
-        const blob = new Blob(chunks, {type: 'video/webm'});
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `VTV_${Date.now()}.webm`;
-        a.click();
-    };
-    mr.start();
-    setTimeout(() => mr.stop(), 10000);
-    alert('Đang quay 10 giây...');
-}
-
-async function findAndReplaceFull() {
-    if (!parsedInfo) return;
-    const q = `${parsedInfo.series} tập ${parsedInfo.episode}`;
-    const res = await searchYT(q);
-    const full = res.filter(v => {
-        const p = parseTitle(v.title);
-        return p && p.episode === parsedInfo.episode && p.series === parsedInfo.series && v.title.toLowerCase().includes('full');
-    });
-    if (full.length) {
-        if (confirm(`Tìm thấy bản Full: ${full[0].title}. Chuyển sang?`)) {
-            window.location.href = `https://youtu.be/${full[0].videoId}`;
-        }
-    }
-}
-
-function getNotes(epKey) {
-    const all = GM_getValue('vtvUlt_communityNotes', '{}');
-    return JSON.parse(all)[epKey] || [];
-}
-
-function addNote(epKey, text) {
-    const all = GM_getValue('vtvUlt_communityNotes', '{}');
-    const data = JSON.parse(all);
-    if (!data[epKey]) data[epKey] = [];
-    data[epKey].push({text, time: Date.now()});
-    GM_setValue('vtvUlt_communityNotes', JSON.stringify(data));
-}
-
-function scrollToCurrentInPlaylist() {
-    if (!location.href.includes('&list=')) return;
-    const cid = new URLSearchParams(location.search).get('v');
-    if (!cid) return;
-    document.querySelectorAll('ytd-playlist-video-renderer').forEach(el => {
-        const a = el.querySelector('#video-title');
-        if (a && a.href.includes(cid)) {
-            el.scrollIntoView({behavior:'smooth', block:'center'});
-            el.style.border = '2px solid #3ea6ff';
-        }
-    });
 }
