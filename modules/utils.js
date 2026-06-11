@@ -5,8 +5,9 @@ const AD_MAX_DURATION = 30;
 const EPISODES_TO_SHOW = 5;
 const INCLUDE_CHANNEL_IN_SEARCH = true;
 
+// Cache toàn cục cho tìm kiếm (dùng chung)
 const searchCache = new Map();
-const SEARCH_CACHE_TTL = 30 * 60 * 1000;
+const SEARCH_CACHE_TTL = 30 * 60 * 1000; // 30 phút
 
 let autoPlay = GM_getValue('vtvUlt_auto', true);
 let marathon = GM_getValue('vtvUlt_marathon', false);

@@ -1,18 +1,4 @@
-// virtual-playlist.js - Lấy toàn bộ video từ playlist (fetch tất cả continuation)
-const searchCache = new Map();
-const SEARCH_CACHE_TTL = 30 * 60 * 1000;
-
-async function cachedSearchYT(query) {
-    const key = query.toLowerCase().trim();
-    const cached = searchCache.get(key);
-    if (cached && (Date.now() - cached.timestamp < SEARCH_CACHE_TTL)) {
-        log('Search cache hit:', query);
-        return cached.data;
-    }
-    const results = await searchYT(query);
-    searchCache.set(key, { data: results, timestamp: Date.now() });
-    return results;
-}
+// virtual-playlist.js - Lấy toàn bộ video từ playlist (dùng cache search toàn cục, sửa lọc mùa)
 
 async function fetchPlaylistsForSeries(seriesName) {
     const query = `${seriesName} playlist`;
@@ -155,6 +141,7 @@ async function buildVirtualPlaylist(seriesName) {
         const videos = await fetchVideosFromPlaylist(pl.playlistId);
         allVideos = allVideos.concat(videos);
     }
+    // Loại bỏ trùng lặp
     const seen = new Set();
     const unique = [];
     for (const v of allVideos) {
@@ -163,6 +150,7 @@ async function buildVirtualPlaylist(seriesName) {
             unique.push(v);
         }
     }
+    // Sắp xếp
     unique.sort((a, b) => {
         const pa = parseTitle(a.title);
         const pb = parseTitle(b.title);
