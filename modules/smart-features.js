@@ -1,4 +1,7 @@
-// smart-features.js - Voice Control nâng cấp (xử lý mạnh mẽ, tự động clear label)
+// smart-features.js - Voice Control (fix videoEl null, improved logging, stable)
+let voicePausedVideo = false;
+let voiceResumeTimer = null;
+
 function initVoiceControl() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
         warn('Trình duyệt không hỗ trợ Web Speech API');
@@ -12,14 +15,18 @@ function initVoiceControl() {
     voiceRecognition.interimResults = true;
     voiceRecognition.maxAlternatives = 3;
     
-    let lastInterim = '';
-    let interimTimer = null;
+    voiceRecognition.onstart = () => {
+        // Tạm dừng video để tránh âm thanh lọt vào micro
+        if (videoEl && !videoEl.paused) {
+            videoEl.pause();
+            voicePausedVideo = true;
+        }
+    };
     
     voiceRecognition.onresult = (e) => {
         let finalTranscript = '';
         let interimTranscript = '';
         for (let i = e.resultIndex; i < e.results.length; ++i) {
-            // Lấy kết quả tốt nhất (có confidence cao nhất)
             let best = e.results[i][0];
             for (let j = 1; j < e.results[i].length; j++) {
                 if (e.results[i][j].confidence > best.confidence) best = e.results[i][j];
@@ -34,20 +41,14 @@ function initVoiceControl() {
         if (transcript) {
             if (typeof updateVoiceLabel === 'function') updateVoiceLabel(transcript);
             const t = transcript.toLowerCase().trim();
-            // Xử lý lệnh ngay nếu là final hoặc interim đủ dài và ổn định
-            if (finalTranscript) {
+            log('Voice raw result:', transcript, 'final:', !!finalTranscript);
+            // Execute command if final or clear command pattern
+            if (finalTranscript || /tua\s+\d+|tiếp theo|quay lại|dừng|phát|marathon|audio mode|pip/i.test(t)) {
                 processVoiceCommand(t);
-                // Tự động clear label sau 2 giây
+                resumeVideoAfterVoice();
+                // Clear label after 2s
                 clearTimeout(interimTimer);
                 interimTimer = setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
-            } else if (interimTranscript && interimTranscript !== lastInterim) {
-                lastInterim = interimTranscript;
-                // Nếu interim chứa lệnh rõ ràng, thực thi ngay
-                if (/tua \d+ (giây|phút)|tua (đến|tới) \d+|tiếp theo|quay lại|dừng|phát|marathon|audio mode/i.test(t)) {
-                    processVoiceCommand(t);
-                    clearTimeout(interimTimer);
-                    interimTimer = setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
-                }
             }
         }
     };
@@ -55,19 +56,25 @@ function initVoiceControl() {
     voiceRecognition.onerror = (e) => {
         warn('Voice error:', e.error);
         if (typeof updateVoiceLabel === 'function') updateVoiceLabel('Lỗi: ' + e.error);
+        resumeVideoAfterVoice();
         setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 3000);
     };
     
     voiceRecognition.onend = () => {
+        log('Voice recognition ended');
+        resumeVideoAfterVoice();
         if (typeof updateVoiceLabel === 'function') updateVoiceLabel('');
+        // Restart if voice is still enabled
         if (voiceEnabled) {
-            try { voiceRecognition.start(); } catch (e) {}
+            setTimeout(() => {
+                if (voiceEnabled) initVoiceControl();
+            }, 500);
         }
     };
     
     try {
         voiceRecognition.start();
-        log('Voice control started (native Vietnamese)');
+        log('Voice control started (native Vietnamese, auto-pause video)');
         if (typeof updateVoiceLabel === 'function') updateVoiceLabel('🎤 Đang nghe...');
         setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
     } catch (e) {
@@ -76,13 +83,27 @@ function initVoiceControl() {
     }
 }
 
+function resumeVideoAfterVoice() {
+    if (voicePausedVideo && videoEl && videoEl.paused) {
+        videoEl.play().catch(() => {});
+        voicePausedVideo = false;
+    }
+}
+
 function processVoiceCommand(t) {
-    log('Voice command:', t);
+    log('Processing voice command:', t);
     
-    // Chuẩn hóa: bỏ dấu câu thừa, thay thế từ đồng nghĩa
+    // Ensure videoEl is available
+    if (!videoEl) {
+        videoEl = document.querySelector('video.html5-main-video');
+        if (!videoEl) {
+            log('No video element found');
+            return;
+        }
+    }
+    
     t = t.replace(/[.,?!]/g, '').replace(/\s+/g, ' ').trim();
     
-    // ========== ĐIỀU HƯỚNG TẬP ==========
     if (/tiếp theo|tập sau|next/i.test(t)) {
         if (nextUrl) window.location.href = nextUrl;
         return;
@@ -92,7 +113,7 @@ function processVoiceCommand(t) {
         return;
     }
     
-    // ========== TUA CHÍNH XÁC (đến vị trí cụ thể) ==========
+    // Tua đến vị trí cụ thể
     if (/tua đến|tua tới|đến phút|đến\s+\d/i.test(t)) {
         const patterns = [
             /(\d+)\s*phút\s*(\d+)\s*giây/,
@@ -110,16 +131,14 @@ function processVoiceCommand(t) {
                 } else {
                     target = parseInt(m[1]) * (p.toString().includes('phút') ? 60 : 1);
                 }
-                if (target !== null && videoEl) {
-                    videoEl.currentTime = Math.min(videoEl.duration, target);
-                    log('Voice: seek to', target, 'seconds');
-                }
+                videoEl.currentTime = Math.min(videoEl.duration, target);
+                log('Voice: seek to', target, 'seconds');
                 return;
             }
         }
     }
     
-    // ========== TUA THÊM (tua nhanh) ==========
+    // Tua thêm (forward)
     if (/tua thêm|tua nhanh|tua\s+\d+|tiến\s+\d+|tới\s+\d+/i.test(t)) {
         let amount = 30;
         const m = t.match(/(\d+)\s*(phút|giây|s)/);
@@ -127,14 +146,12 @@ function processVoiceCommand(t) {
             amount = parseInt(m[1]);
             if (m[2] && m[2].includes('phút')) amount *= 60;
         }
-        if (videoEl) {
-            videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + amount);
-            log('Voice: forward', amount, 'seconds');
-        }
+        videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + amount);
+        log('Voice: forward', amount, 'seconds');
         return;
     }
     
-    // ========== TUA LÙI ==========
+    // Tua lùi
     if (/chậm lại|lùi\s+\d+|tua lại\s+\d+|tua lui\s+\d+/i.test(t)) {
         let amount = 10;
         const m = t.match(/(\d+)\s*(phút|giây|s)/);
@@ -142,30 +159,27 @@ function processVoiceCommand(t) {
             amount = parseInt(m[1]);
             if (m[2] && m[2].includes('phút')) amount *= 60;
         }
-        if (videoEl) {
-            videoEl.currentTime = Math.max(0, videoEl.currentTime - amount);
-            log('Voice: backward', amount, 'seconds');
-        }
+        videoEl.currentTime = Math.max(0, videoEl.currentTime - amount);
+        log('Voice: backward', amount, 'seconds');
         return;
     }
     
-    // ========== ĐIỀU KHIỂN PHÁT ==========
-    if (/dừng|tạm dừng|pause/i.test(t)) { if (videoEl) videoEl.pause(); return; }
-    if (/tiếp tục|phát|play|chạy/i.test(t)) { if (videoEl) videoEl.play(); return; }
+    // Phát/dừng
+    if (/dừng|tạm dừng|pause/i.test(t)) { videoEl.pause(); return; }
+    if (/tiếp tục|phát|play|chạy/i.test(t)) { videoEl.play(); return; }
     
-    // ========== ÂM LƯỢNG ==========
+    // Âm lượng
     if (/âm lượng|volume/i.test(t)) {
         const m = t.match(/(\d+)/);
-        if (m && videoEl) videoEl.volume = Math.min(1, parseInt(m[1]) / 100);
+        if (m) videoEl.volume = Math.min(1, parseInt(m[1]) / 100);
         return;
     }
-    if (/tắt tiếng|mute/i.test(t)) { if (videoEl) videoEl.volume = 0; return; }
-    if (/bật tiếng|unmute/i.test(t)) { if (videoEl) videoEl.volume = 1; return; }
+    if (/tắt tiếng|mute/i.test(t)) { videoEl.volume = 0; return; }
+    if (/bật tiếng|unmute/i.test(t)) { videoEl.volume = 1; return; }
     
-    // ========== TOÀN MÀN HÌNH ==========
+    // Toàn màn hình
     if (/toàn màn hình|fullscreen/i.test(t)) {
-        const fsBtn = document.querySelector('.ytp-fullscreen-button');
-        if (fsBtn) fsBtn.click();
+        document.querySelector('.ytp-fullscreen-button')?.click();
         return;
     }
     if (/thoát toàn màn hình/i.test(t)) {
@@ -173,21 +187,21 @@ function processVoiceCommand(t) {
         return;
     }
     
-    // ========== TỐC ĐỘ PHÁT ==========
+    // Tốc độ
     if (/tăng tốc độ|nhanh hơn|speed up/i.test(t)) {
-        if (videoEl) videoEl.playbackRate = Math.min(2, videoEl.playbackRate + 0.25);
+        videoEl.playbackRate = Math.min(2, videoEl.playbackRate + 0.25);
         return;
     }
     if (/giảm tốc độ|chậm hơn|slow down/i.test(t)) {
-        if (videoEl) videoEl.playbackRate = Math.max(0.25, videoEl.playbackRate - 0.25);
+        videoEl.playbackRate = Math.max(0.25, videoEl.playbackRate - 0.25);
         return;
     }
     if (/tốc độ bình thường|bình thường|normal speed/i.test(t)) {
-        if (videoEl) videoEl.playbackRate = 1;
+        videoEl.playbackRate = 1;
         return;
     }
     
-    // ========== TOGGLE ==========
+    // Toggles
     if (/marathon/i.test(t)) {
         marathon = !marathon; GM_setValue('vtvUlt_marathon', marathon);
         if (marathon) { document.body.classList.add('vtv-marathon'); if (typeof startAdBlocking === 'function') startAdBlocking(); }
@@ -211,24 +225,29 @@ function processVoiceCommand(t) {
         return;
     }
     
-    // ========== LIKE / DISLIKE ==========
+    // Like/Dislike
     if (/like|thích/i.test(t)) {
-        const likeBtn = document.querySelector('#top-level-buttons-computed yt-icon-button:first-child button');
-        if (likeBtn) likeBtn.click();
+        document.querySelector('#top-level-buttons-computed yt-icon-button:first-child button')?.click();
         return;
     }
     if (/dislike|không thích/i.test(t)) {
-        const dislikeBtn = document.querySelector('#top-level-buttons-computed yt-icon-button:last-child button');
-        if (dislikeBtn) dislikeBtn.click();
+        document.querySelector('#top-level-buttons-computed yt-icon-button:last-child button')?.click();
         return;
     }
 }
 
 function startVoiceControl() {
-    if (voiceRecognition) { try { voiceRecognition.abort(); } catch(e) {} }
+    if (voiceRecognition) {
+        try { voiceRecognition.abort(); } catch(e) {}
+        voiceRecognition = null;
+    }
     initVoiceControl();
 }
 
 function stopVoiceControl() {
-    if (voiceRecognition) { voiceRecognition.stop(); voiceRecognition = null; log('Voice control stopped'); }
+    if (voiceRecognition) {
+        voiceRecognition.stop();
+        voiceRecognition = null;
+        log('Voice control stopped');
+    }
 }
