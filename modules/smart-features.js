@@ -1,6 +1,5 @@
-// smart-features.js - Voice Control (fix videoEl null, improved logging, stable)
+// smart-features.js - Voice Control (nâng cấp), GIF, Watch Later, Full Replace, Notes, Age Bypass, Scroll Playlist
 let voicePausedVideo = false;
-let voiceResumeTimer = null;
 
 function initVoiceControl() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
@@ -47,8 +46,7 @@ function initVoiceControl() {
                 processVoiceCommand(t);
                 resumeVideoAfterVoice();
                 // Clear label after 2s
-                clearTimeout(interimTimer);
-                interimTimer = setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
+                setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
             }
         }
     };
@@ -250,4 +248,101 @@ function stopVoiceControl() {
         voiceRecognition = null;
         log('Voice control stopped');
     }
+}
+
+// ========== BYPASS AGE RESTRICTION ==========
+async function bypassAgeRestriction(videoId) {
+    const methods = [
+        { name: 'Embed (YouTube)', url: `https://www.youtube.com/embed/${videoId}?autoplay=1` },
+        { name: 'YouTube NoCookie', url: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1` },
+        { name: 'Invidious (snopyta)', url: `https://invidious.snopyta.org/watch?v=${videoId}` },
+        { name: 'Invidious (yewtu)', url: `https://yewtu.be/watch?v=${videoId}` },
+        { name: 'Piped', url: `https://piped.video/watch?v=${videoId}` },
+        { name: 'Piped (kavin)', url: `https://piped.kavin.rocks/watch?v=${videoId}` },
+        { name: 'CloudTube', url: `https://tube.cadence.moe/watch?v=${videoId}` }
+    ];
+    for (const method of methods) {
+        try {
+            const resp = await fetch(method.url, { method: 'HEAD' });
+            if (resp.ok) {
+                if (confirm(`Mở bằng: ${method.name}?`)) {
+                    window.location.href = method.url;
+                    return;
+                }
+            }
+        } catch(e) { continue; }
+    }
+    const choice = prompt('Chọn phương thức bypass:\n1. Embed (YouTube)\n2. Invidious\n3. Piped');
+    if (choice === '1') window.location.href = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
+    else if (choice === '2') window.location.href = `https://invidious.snopyta.org/watch?v=${videoId}`;
+    else if (choice === '3') window.location.href = `https://piped.video/watch?v=${videoId}`;
+}
+
+// ========== Các tiện ích khác ==========
+function addToWatchLater(url, title) {
+    let list = profileStore('watchLater', []);
+    if (!list.find(v => v.url === url)) {
+        list.push({url, title, added: Date.now()});
+        profileStore('watchLater', list);
+        GM_notification({text: 'Đã thêm vào Xem sau: ' + title, timeout: 2000});
+    }
+}
+
+function recordGIF() {
+    if (!videoEl?.captureStream) return alert('Không hỗ trợ quay video');
+    const stream = videoEl.captureStream();
+    const mr = new MediaRecorder(stream, {mimeType: 'video/webm'});
+    const chunks = [];
+    mr.ondataavailable = e => chunks.push(e.data);
+    mr.onstop = () => {
+        const blob = new Blob(chunks, {type: 'video/webm'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `VTV_${Date.now()}.webm`;
+        a.click();
+    };
+    mr.start();
+    setTimeout(() => mr.stop(), 10000);
+    alert('Đang quay 10 giây...');
+}
+
+async function findAndReplaceFull() {
+    if (!parsedInfo) return;
+    const q = `${parsedInfo.series} tập ${parsedInfo.episode}`;
+    const res = await searchYT(q);
+    const full = res.filter(v => {
+        const p = parseTitle(v.title);
+        return p && p.episode === parsedInfo.episode && p.series === parsedInfo.series && v.title.toLowerCase().includes('full');
+    });
+    if (full.length) {
+        if (confirm(`Tìm thấy bản Full: ${full[0].title}. Chuyển sang?`)) {
+            window.location.href = `https://youtu.be/${full[0].videoId}`;
+        }
+    }
+}
+
+function getNotes(epKey) {
+    const all = GM_getValue('vtvUlt_communityNotes', '{}');
+    return JSON.parse(all)[epKey] || [];
+}
+
+function addNote(epKey, text) {
+    const all = GM_getValue('vtvUlt_communityNotes', '{}');
+    const data = JSON.parse(all);
+    if (!data[epKey]) data[epKey] = [];
+    data[epKey].push({text, time: Date.now()});
+    GM_setValue('vtvUlt_communityNotes', JSON.stringify(data));
+}
+
+function scrollToCurrentInPlaylist() {
+    if (!location.href.includes('&list=')) return;
+    const cid = new URLSearchParams(location.search).get('v');
+    if (!cid) return;
+    document.querySelectorAll('ytd-playlist-video-renderer').forEach(el => {
+        const a = el.querySelector('#video-title');
+        if (a && a.href.includes(cid)) {
+            el.scrollIntoView({behavior:'smooth', block:'center'});
+            el.style.border = '2px solid #3ea6ff';
+        }
+    });
 }
