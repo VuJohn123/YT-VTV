@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
-// @version      8.5
-// @description  Cache virtual playlist, toggle playlist, auto‑next mượt, tối ưu hiệu suất
+// @version      8.6
+// @description  Injected UI, voice label, fix tìm tập, audio mode & PiP sửa lỗi, mở rộng phát hiện tập thiếu, tối ưu mạng, cache search
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
