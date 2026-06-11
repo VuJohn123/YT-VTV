@@ -1,4 +1,4 @@
-// virtual-playlist.js - Lấy toàn bộ video từ playlist của series, sắp xếp chuẩn
+// virtual-playlist.js - Lấy toàn bộ video từ playlist (sửa lỗi thiếu tập)
 
 async function fetchPlaylistsForSeries(seriesName) {
     const query = `${seriesName} playlist`;
@@ -24,7 +24,6 @@ async function fetchPlaylistsForSeries(seriesName) {
             }
         }
     } catch(e) {}
-    log(`Found ${playlists.length} playlists for "${seriesName}"`);
     return playlists;
 }
 
@@ -32,30 +31,21 @@ async function fetchVideosFromPlaylist(playlistId) {
     const videos = [];
     let continuation = null;
     let attempts = 0;
-    const maxAttempts = 50; // An toàn, tránh vòng lặp vô hạn
+    const maxAttempts = 100;
 
-    // Hàm gửi request POST tới YouTube API để lấy tiếp tục
-    async function fetchWithContinuation(token) {
-        const apiUrl = 'https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
-        const body = {
-            context: {
-                client: {
-                    clientName: 'WEB',
-                    clientVersion: '2.20250610.00.00'
-                }
-            },
-            continuation: token
-        };
-        const resp = await fetch(apiUrl, {
+    async function fetchContinuation(token) {
+        const resp = await fetch('https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify({
+                context: { client: { clientName: 'WEB', clientVersion: '2.20250610.00.00' } },
+                continuation: token
+            })
         });
         return resp.json();
     }
 
     try {
-        // Lần đầu: load trang playlist
         let url = `https://www.youtube.com/playlist?list=${playlistId}`;
         let resp = await fetch(url);
         let html = await resp.text();
@@ -63,7 +53,6 @@ async function fetchVideosFromPlaylist(playlistId) {
         if (!m) return videos;
         let data = JSON.parse(m[1]);
 
-        // Lấy video từ dữ liệu ban đầu
         const extractVideos = (data) => {
             const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs;
             if (!tabs) return { videos: [], continuation: null };
@@ -86,7 +75,6 @@ async function fetchVideosFromPlaylist(playlistId) {
                     }
                 }
             }
-            // Tìm continuation token
             const continuations = data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.continuations;
             if (continuations?.[0]?.nextContinuationData?.continuation) {
                 return { videos, continuation: continuations[0].nextContinuationData.continuation };
@@ -98,11 +86,9 @@ async function fetchVideosFromPlaylist(playlistId) {
         continuation = result.continuation;
         attempts++;
 
-        // Tiếp tục lấy các trang sau qua API
         while (continuation && attempts < maxAttempts) {
-            const nextData = await fetchWithContinuation(continuation);
+            const nextData = await fetchContinuation(continuation);
             if (!nextData) break;
-            // Lấy video từ response tiếp tục
             const onResponseActions = nextData?.onResponseReceivedActions;
             if (onResponseActions) {
                 for (const action of onResponseActions) {
@@ -120,12 +106,7 @@ async function fetchVideosFromPlaylist(playlistId) {
                     }
                 }
             }
-            // Lấy continuation mới
             continuation = null;
-            const nextContinuation = nextData?.responseContext?.serviceTrackingParams?.[0]?.params?.[0]?.value;
-            // Thực tế cần parse từ response, nhưng thường không có. Ta dùng cách khác: lấy từ request tiếp theo nếu có.
-            // Đơn giản hóa: ta sẽ dừng nếu không có thêm video nào sau khi gọi.
-            // Ta có thể tìm trong onResponseReceivedActions phần continuation.
             if (onResponseActions) {
                 for (const action of onResponseActions) {
                     const cont = action?.appendContinuationItemsAction?.continuation;
@@ -135,7 +116,7 @@ async function fetchVideosFromPlaylist(playlistId) {
             attempts++;
         }
     } catch(e) {
-        warn('Error fetching playlist videos:', e);
+        warn('Error fetching playlist:', e);
     }
     log(`Fetched ${videos.length} videos from playlist ${playlistId}`);
     return videos;
@@ -158,10 +139,8 @@ async function buildVirtualPlaylist(seriesName) {
     playlists.sort((a, b) => b.videoCount - a.videoCount);
     for (const pl of playlists) {
         const videos = await fetchVideosFromPlaylist(pl.playlistId);
-        log(`Fetched ${videos.length} videos from playlist: ${pl.title}`);
         allVideos = allVideos.concat(videos);
     }
-    // Loại bỏ trùng lặp
     const seen = new Set();
     const unique = [];
     for (const v of allVideos) {
@@ -170,7 +149,6 @@ async function buildVirtualPlaylist(seriesName) {
             unique.push(v);
         }
     }
-    // Sắp xếp theo số tập và phân đoạn
     unique.sort((a, b) => {
         const pa = parseTitle(a.title);
         const pb = parseTitle(b.title);
@@ -180,7 +158,6 @@ async function buildVirtualPlaylist(seriesName) {
         if (pa.episode !== pb.episode) return pa.episode - pb.episode;
         return (pa.segment || 0) - (pb.segment || 0);
     });
-    log(`Virtual playlist built: ${unique.length} unique videos`);
     GM_setValue(cacheKey, JSON.stringify({ videos: unique, timestamp: Date.now() }));
     return unique;
 }
