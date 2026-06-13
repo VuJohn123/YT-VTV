@@ -132,10 +132,10 @@
         try { desc = (unsafeWindow.ytInitialPlayerResponse?.videoDetails?.shortDescription) || ''; } catch(e) {}
         const genres = detectGenres(desc);
 
-        if (!cachedVirtualPlaylist || (Date.now() - cachedVirtualPlaylist.timestamp > 3600000)) {
+        if (!cachedVirtualPlaylist || cachedVirtualPlaylist.series !== info.series || (Date.now() - cachedVirtualPlaylist.timestamp > 3600000)) {
             log('Building virtual playlist...');
             const vplist = await buildVirtualPlaylist(info.series);
-            cachedVirtualPlaylist = { data: vplist, timestamp: Date.now() };
+            cachedVirtualPlaylist = { data: vplist, timestamp: Date.now(), series: info.series };
         }
         episodeList = await findEpisodeList(info, channelName, cachedVirtualPlaylist.data);
 

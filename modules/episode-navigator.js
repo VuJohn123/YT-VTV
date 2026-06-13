@@ -128,6 +128,30 @@ async function findEpisodeList(info, channel, virtualPlaylistData) {
 
     if (virtualPlaylistData && virtualPlaylistData.length > 0) {
         addVideos(virtualPlaylistData);
+
+        // Kiểm tra xem tập hiện tại có đủ tất cả segments không
+        // (virtual playlist có thể thiếu một số segment do playlist YT không đầy đủ)
+        if (info.totalSeg && info.totalSeg > 1) {
+            const presentSegments = new Set(
+                list.filter(e => e.episode === ce).map(e => e.segment)
+            );
+            const missingSegs = [];
+            for (let seg = 1; seg <= info.totalSeg; seg++) {
+                if (!presentSegments.has(seg)) missingSegs.push(seg);
+            }
+            if (missingSegs.length > 0) {
+                log(`Virtual playlist thiếu segment ${missingSegs} của tập ${ce}, bổ sung bằng search...`);
+                const segQuery = `${info.series} tập ${ce}${partStr}`;
+                const segResults = await searchYT(mk(segQuery));
+                const validSegs = segResults.filter(v => {
+                    const p = parseTitle(v.title);
+                    if (!p || p.series !== info.series || p.episode !== ce) return false;
+                    if (info.season && p.season !== null && p.season !== info.season) return false;
+                    return true;
+                });
+                addVideos(validSegs);
+            }
+        }
     } else {
         // Fallback search nếu không có virtual playlist
         const startEp = Math.max(1, ce - 3);
@@ -149,6 +173,19 @@ async function findEpisodeList(info, channel, virtualPlaylistData) {
                 });
                 addVideos(valid);
             }
+        }
+
+        // Bổ sung tìm kiếm các segment của tập hiện tại nếu có multi-part
+        if (info.totalSeg && info.totalSeg > 1) {
+            const segQuery = `${info.series} tập ${ce}${partStr}`;
+            const segResults = await searchYT(mk(segQuery));
+            const validSegs = segResults.filter(v => {
+                const p = parseTitle(v.title);
+                if (!p || p.series !== info.series || p.episode !== ce) return false;
+                if (info.season && p.season !== null && p.season !== info.season) return false;
+                return true;
+            });
+            addVideos(validSegs);
         }
     }
 
