@@ -2,32 +2,45 @@
 // voiceRecognition được khai báo trong utils.js - KHÔNG khai báo lại ở đây
 
 let isRecording = false;
+let _voiceInitialized = false; // guard: tránh init lại khi đã có instance hợp lệ
 const PT_KEY = 'v'; // giữ phím V để nói
 
 // ========== PUSH‑TO‑TALK VOICE CONTROL ==========
+function _destroyVoiceRecognition() {
+    // Phải NULL handlers TRƯỚC khi abort — nếu abort() trước, handlers vẫn fire async
+    // và có thể abort() instance MỚI vừa tạo (Bug A)
+    if (voiceRecognition) {
+        voiceRecognition.onresult = null;
+        voiceRecognition.onerror = null;
+        voiceRecognition.onend = null;
+        try { voiceRecognition.abort(); } catch(e) {}
+        voiceRecognition = null;
+    }
+    isRecording = false;
+    _voiceInitialized = false;
+}
+
 function initVoiceControl() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
         warn('Trình duyệt không hỗ trợ Web Speech API');
         return;
     }
-    if (voiceRecognition) {
-        try { voiceRecognition.abort(); } catch(e) {}
-        voiceRecognition = null;
-    }
+    // Phá hủy instance cũ hoàn toàn (handlers nulled trước) để tránh callback zombie
+    _destroyVoiceRecognition();
+
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     voiceRecognition = new SR();
     voiceRecognition.lang = 'vi-VN';
     voiceRecognition.continuous = false;
     voiceRecognition.interimResults = false;
     voiceRecognition.maxAlternatives = 1;
+    _voiceInitialized = true;
 
     voiceRecognition.onresult = (e) => {
         if (!isRecording) return;
         let transcript = '';
         for (let i = e.resultIndex; i < e.results.length; ++i) {
-            if (e.results[i].isFinal) {
-                transcript += e.results[i][0].transcript;
-            }
+            if (e.results[i].isFinal) transcript += e.results[i][0].transcript;
         }
         transcript = transcript.toLowerCase().trim();
         if (transcript && transcript.length < 80) {
@@ -36,25 +49,32 @@ function initVoiceControl() {
             processVoiceCommand(transcript);
             setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 1500);
         }
-        stopRecording();
+        // Đừng gọi stopRecording() ở đây — onend sẽ tự lo
     };
 
     voiceRecognition.onerror = (e) => {
-        if (e.error === 'aborted') return;
+        // 'aborted' là do ta chủ động abort(), không phải lỗi thật — bỏ qua
+        if (e.error === 'aborted' || e.error === 'no-speech') return;
         warn('Voice error:', e.error);
         if (typeof updateVoiceLabel === 'function') updateVoiceLabel('Lỗi: ' + e.error);
-        stopRecording();
+        isRecording = false;
     };
 
     voiceRecognition.onend = () => {
-        if (isRecording) stopRecording();
+        // KHÔNG tự restart ở đây — đây là push-to-talk, không phải always-on
+        // Chỉ reset trạng thái
+        if (isRecording) {
+            isRecording = false;
+            if (typeof updateVoiceLabel === 'function') updateVoiceLabel('');
+        }
     };
 
     log('Push-to-Talk voice control ready (hold "' + PT_KEY.toUpperCase() + '" to speak)');
 }
 
 function startRecording() {
-    if (!voiceRecognition) initVoiceControl();
+    if (!voiceEnabled) return; // tắt rồi thì không bắt đầu
+    if (!voiceRecognition || !_voiceInitialized) initVoiceControl();
     if (!voiceRecognition || isRecording) return;
     isRecording = true;
     try {
@@ -67,9 +87,22 @@ function startRecording() {
 }
 
 function stopRecording() {
-    if (!voiceRecognition || !isRecording) return;
+    if (!isRecording) return;
     isRecording = false;
-    try { voiceRecognition.abort(); } catch(e) {}
+    // Null handlers trước abort để tránh fire thêm
+    if (voiceRecognition) {
+        const old = voiceRecognition;
+        old.onend = null; // tắt callback trước
+        old.onerror = null;
+        try { old.abort(); } catch(e) {}
+        // Tạo lại instance sạch cho lần push-to-talk kế tiếp
+        if (voiceEnabled && _voiceInitialized) {
+            // Re-init sau abort để sẵn sàng cho lần tiếp
+            setTimeout(() => {
+                if (voiceEnabled) initVoiceControl();
+            }, 150);
+        }
+    }
     if (typeof updateVoiceLabel === 'function') updateVoiceLabel('');
 }
 
@@ -91,14 +124,20 @@ document.addEventListener('keyup', (e) => {
 function startVoiceControl() {
     voiceEnabled = true;
     GM_setValue('vtvUlt_voice', true);
-    initVoiceControl();
+    // Bug B fix: nếu đã có instance hợp lệ thì KHÔNG init lại
+    // main() gọi hàm này mỗi lần tìm tập xong — không nên destroy instance đang tốt
+    if (!_voiceInitialized) {
+        initVoiceControl();
+    }
     log('Voice control enabled (push-to-talk)');
 }
 
 function stopVoiceControl() {
-    stopRecording();
-    voiceEnabled = false;
+    voiceEnabled = false; // set trước để mọi handler check voiceEnabled đều thấy false
     GM_setValue('vtvUlt_voice', false);
+    // Bug C fix: phá hủy hoàn toàn (null handlers trước) để không còn callback zombie
+    _destroyVoiceRecognition();
+    if (typeof updateVoiceLabel === 'function') updateVoiceLabel('');
     log('Voice control disabled');
 }
 
