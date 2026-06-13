@@ -36,6 +36,22 @@
 (function() {
     'use strict';
 
+    // === FIX BUG #1: searchYT cache override đặt tại đây vì search.js load trước main script ===
+    // Tại thời điểm này tất cả @require đã chạy xong → searchYT đã được định nghĩa
+    const _rawSearchYT = searchYT;
+    searchYT = async function(query) {
+        const key = query.toLowerCase().trim();
+        const cached = searchCache.get(key);
+        if (cached && (Date.now() - cached.timestamp < SEARCH_CACHE_TTL)) {
+            log('Search cache hit:', query);
+            return cached.data;
+        }
+        const results = await _rawSearchYT(query);
+        searchCache.set(key, { data: results, timestamp: Date.now() });
+        return results;
+    };
+    // =====================================================================================
+
     let cachedVirtualPlaylist = null;
     let mainRunning = false;
 
@@ -115,7 +131,6 @@
         let desc = '';
         try { desc = (unsafeWindow.ytInitialPlayerResponse?.videoDetails?.shortDescription) || ''; } catch(e) {}
         const genres = detectGenres(desc);
-        updateSeriesStats(seriesKey, videoEl?.duration || 0);
 
         if (!cachedVirtualPlaylist || (Date.now() - cachedVirtualPlaylist.timestamp > 3600000)) {
             log('Building virtual playlist...');
@@ -161,6 +176,7 @@
         }
 
         setupMonitoring();
+        updateSeriesStats(seriesKey, videoEl?.duration || 0); // gọi SAU setupMonitoring
         scrollToCurrentInPlaylist();
 
         if (voiceEnabled) startVoiceControl();

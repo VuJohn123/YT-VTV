@@ -1,26 +1,28 @@
-// smart-features.js - Voice Control (continuous, no video pause), GIF, Watch Later, Full Replace, Notes, Age Bypass, Scroll Playlist
+// smart-features.js - Voice Control (Push-to-Talk), GIF, Watch Later, Full Replace, Notes, Age Bypass, Scroll Playlist
+// voiceRecognition được khai báo trong utils.js - KHÔNG khai báo lại ở đây
 
-let lastInterim = '';
-let interimTimer = null;
-let commandCooldown = false;
+let isRecording = false;
+const PT_KEY = 'v'; // giữ phím V để nói
 
+// ========== PUSH‑TO‑TALK VOICE CONTROL ==========
 function initVoiceControl() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
         warn('Trình duyệt không hỗ trợ Web Speech API');
         return;
     }
-    
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (voiceRecognition) {
         try { voiceRecognition.abort(); } catch(e) {}
+        voiceRecognition = null;
     }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     voiceRecognition = new SR();
     voiceRecognition.lang = 'vi-VN';
-    voiceRecognition.continuous = true;
-    voiceRecognition.interimResults = false; // chỉ lấy kết quả cuối cùng
+    voiceRecognition.continuous = false;
+    voiceRecognition.interimResults = false;
     voiceRecognition.maxAlternatives = 1;
-    
+
     voiceRecognition.onresult = (e) => {
+        if (!isRecording) return;
         let transcript = '';
         for (let i = e.resultIndex; i < e.results.length; ++i) {
             if (e.results[i].isFinal) {
@@ -29,47 +31,78 @@ function initVoiceControl() {
         }
         transcript = transcript.toLowerCase().trim();
         if (transcript && transcript.length < 80) {
-            log('Voice final:', transcript);
+            log('Voice command:', transcript);
             if (typeof updateVoiceLabel === 'function') updateVoiceLabel(transcript);
-            if (!commandCooldown && /tua\s+\d+|tiếp theo|quay lại|dừng|phát|marathon|audio mode|pip|tự động|like|dislike/i.test(transcript)) {
-                commandCooldown = true;
-                processVoiceCommand(transcript);
-                setTimeout(() => { commandCooldown = false; }, 1500);
-            }
-            clearTimeout(interimTimer);
-            interimTimer = setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 1500);
+            processVoiceCommand(transcript);
+            setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 1500);
         }
+        stopRecording();
     };
-    
+
     voiceRecognition.onerror = (e) => {
+        if (e.error === 'aborted') return;
         warn('Voice error:', e.error);
         if (typeof updateVoiceLabel === 'function') updateVoiceLabel('Lỗi: ' + e.error);
-        setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
+        stopRecording();
     };
-    
+
     voiceRecognition.onend = () => {
-        log('Voice recognition ended');
-        if (typeof updateVoiceLabel === 'function') updateVoiceLabel('');
-        if (voiceEnabled && voiceRecognition) {
-            setTimeout(() => {
-                if (voiceEnabled && voiceRecognition) {
-                    try { voiceRecognition.start(); } catch(e) {}
-                }
-            }, 1000);
-        }
+        if (isRecording) stopRecording();
     };
-    
+
+    log('Push-to-Talk voice control ready (hold "' + PT_KEY.toUpperCase() + '" to speak)');
+}
+
+function startRecording() {
+    if (!voiceRecognition) initVoiceControl();
+    if (!voiceRecognition || isRecording) return;
+    isRecording = true;
     try {
         voiceRecognition.start();
-        log('Voice control started (continuous, no video pause)');
-        if (typeof updateVoiceLabel === 'function') updateVoiceLabel('🎤 Sẵn sàng');
-        setTimeout(() => { if (typeof updateVoiceLabel === 'function') updateVoiceLabel(''); }, 2000);
-    } catch (e) {
-        warn('Không thể khởi động voice:', e);
-        if (typeof updateVoiceLabel === 'function') updateVoiceLabel('Lỗi khởi động');
+        if (typeof updateVoiceLabel === 'function') updateVoiceLabel('🎤 Đang nghe...');
+    } catch(e) {
+        warn('Không thể bắt đầu ghi âm:', e);
+        isRecording = false;
     }
 }
 
+function stopRecording() {
+    if (!voiceRecognition || !isRecording) return;
+    isRecording = false;
+    try { voiceRecognition.abort(); } catch(e) {}
+    if (typeof updateVoiceLabel === 'function') updateVoiceLabel('');
+}
+
+// Gắn sự kiện bàn phím
+document.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === PT_KEY && !e.repeat && voiceEnabled) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+        e.preventDefault();
+        startRecording();
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    if (e.key.toLowerCase() === PT_KEY) {
+        stopRecording();
+    }
+});
+
+function startVoiceControl() {
+    voiceEnabled = true;
+    GM_setValue('vtvUlt_voice', true);
+    initVoiceControl();
+    log('Voice control enabled (push-to-talk)');
+}
+
+function stopVoiceControl() {
+    stopRecording();
+    voiceEnabled = false;
+    GM_setValue('vtvUlt_voice', false);
+    log('Voice control disabled');
+}
+
+// ========== XỬ LÝ LỆNH GIỌNG NÓI ==========
 function processVoiceCommand(t) {
     log('Processing voice command:', t);
     
@@ -80,6 +113,7 @@ function processVoiceCommand(t) {
     
     t = t.replace(/[.,?!]/g, '').replace(/\s+/g, ' ').trim();
     
+    // Điều hướng tập
     if (/tiếp theo|tập sau|next/i.test(t)) {
         if (nextUrl) window.location.href = nextUrl;
         return;
@@ -151,7 +185,7 @@ function processVoiceCommand(t) {
         return;
     }
     
-    // Tốc độ
+    // Tốc độ phát
     if (/tăng tốc độ|nhanh hơn|speed up/i.test(t)) {
         videoEl.playbackRate = Math.min(2, videoEl.playbackRate + 0.25);
         return;
@@ -165,7 +199,7 @@ function processVoiceCommand(t) {
         return;
     }
     
-    // Toggles
+    // Toggle các chế độ
     if (/marathon/i.test(t)) {
         marathon = !marathon; GM_setValue('vtvUlt_marathon', marathon);
         if (marathon) { document.body.classList.add('vtv-marathon'); if (typeof startAdBlocking === 'function') startAdBlocking(); }
@@ -200,22 +234,6 @@ function processVoiceCommand(t) {
     }
 }
 
-function startVoiceControl() {
-    if (voiceRecognition) {
-        try { voiceRecognition.abort(); } catch(e) {}
-        voiceRecognition = null;
-    }
-    initVoiceControl();
-}
-
-function stopVoiceControl() {
-    if (voiceRecognition) {
-        voiceRecognition.stop();
-        voiceRecognition = null;
-        log('Voice control stopped');
-    }
-}
-
 // ========== BYPASS AGE RESTRICTION ==========
 async function bypassAgeRestriction(videoId) {
     const methods = [
@@ -244,9 +262,9 @@ async function bypassAgeRestriction(videoId) {
     else if (choice === '3') window.location.href = `https://piped.video/watch?v=${videoId}`;
 }
 
-// ========== Các tiện ích khác ==========
+// ========== CÁC TIỆN ÍCH KHÁC ==========
 function addToWatchLater(url, title) {
-    let list = profileStore('watchLater', []);
+    let list = profileStore('watchLater') || []; // không truyền arg thứ 2, để gọi getter
     if (!list.find(v => v.url === url)) {
         list.push({url, title, added: Date.now()});
         profileStore('watchLater', list);
@@ -289,12 +307,13 @@ async function findAndReplaceFull() {
 
 function getNotes(epKey) {
     const all = GM_getValue('vtvUlt_communityNotes', '{}');
-    return JSON.parse(all)[epKey] || [];
+    try { return JSON.parse(all)[epKey] || []; } catch(e) { return []; }
 }
 
 function addNote(epKey, text) {
     const all = GM_getValue('vtvUlt_communityNotes', '{}');
-    const data = JSON.parse(all);
+    let data;
+    try { data = JSON.parse(all); } catch(e) { data = {}; }
     if (!data[epKey]) data[epKey] = [];
     data[epKey].push({text, time: Date.now()});
     GM_setValue('vtvUlt_communityNotes', JSON.stringify(data));

@@ -45,7 +45,5 @@ function forceBuffer() {
     }, 2000);
 }
 
-// Gọi khi script khởi tạo
-if (location.pathname === '/watch') {
-    setTimeout(optimizeConnection, 2000);
-}
+// optimizeConnection được gọi từ main() sau khi videoEl đã sẵn sàng
+// KHÔNG gọi tại đây để tránh race condition và duplicate calls

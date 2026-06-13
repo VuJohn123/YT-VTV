@@ -1,6 +1,7 @@
 // audio-mode.js - Audio Mode + Data Saver (chỉ can thiệp khi bật, khôi phục khi tắt)
 let audioOverlay = null;
 let previousQuality = null;
+let _audioModeActive = false; // internal activation flag (tránh bug với audioMode được set trước khi gọi)
 
 function initAudioMode() {
     if (audioOverlay) return;
@@ -68,7 +69,8 @@ async function setLowestQuality() {
 }
 
 function enableAudioMode() {
-    if (audioMode) return;
+    if (_audioModeActive) return; // dùng internal flag, KHÔNG dùng audioMode (UI đã set trước khi gọi)
+    _audioModeActive = true;
     audioMode = true;
     GM_setValue('vtvUlt_audioMode', true);
     initAudioMode();
@@ -81,7 +83,8 @@ function enableAudioMode() {
 }
 
 function disableAudioMode() {
-    if (!audioMode) return;
+    if (!_audioModeActive) return; // dùng internal flag
+    _audioModeActive = false;
     audioMode = false;
     GM_setValue('vtvUlt_audioMode', false);
     if (audioOverlay) {

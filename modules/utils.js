@@ -38,19 +38,8 @@ const log = (...a) => DEBUG && console.log('[VTV Ult]', ...a);
 const warn = (...a) => DEBUG && console.warn('[VTV Ult]', ...a);
 function escapeHTML(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-// Override searchYT toàn cục với cache
-const originalSearchYT = searchYT;
-searchYT = async function(query) {
-    const key = query.toLowerCase().trim();
-    const cached = searchCache.get(key);
-    if (cached && (Date.now() - cached.timestamp < SEARCH_CACHE_TTL)) {
-        log('Search cache hit:', query);
-        return cached.data;
-    }
-    const results = await originalSearchYT(query);
-    searchCache.set(key, { data: results, timestamp: Date.now() });
-    return results;
-};
+// NOTE: searchYT cache override được thực hiện trong vtv-ultimate.user.js
+// vì search.js load SAU utils.js — không thể override ở đây.
 
 function parseTitle(rawTitle) {
     log('Parsing title:', rawTitle);

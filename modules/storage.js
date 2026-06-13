@@ -21,7 +21,8 @@ function setupProfiles() {
 }
 function getStoredSeries(key) {
     const raw = profileStore('series_' + key);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch(e) { warn('Corrupt series data for', key); return null; }
 }
 function storeSeries(key, lastEp, nextUrl, nextTitle) {
     profileStore('series_' + key, JSON.stringify({lastEp, nextUrl, nextTitle}));
@@ -31,7 +32,8 @@ function clearSeries(key) {
 }
 function getHistory(key) {
     const raw = profileStore('history_' + key);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    try { return JSON.parse(raw); } catch(e) { warn('Corrupt history for', key); return []; }
 }
 function addToHistory(key, episode, url, title) {
     const h = getHistory(key);
@@ -39,7 +41,8 @@ function addToHistory(key, episode, url, title) {
 }
 function getSkipData(key) {
     const raw = GM_getValue('vtvUlt_skipData' + key, null);
-    return raw ? JSON.parse(raw) : { intros: [], outros: [] };
+    if (!raw) return { intros: [], outros: [] };
+    try { return JSON.parse(raw); } catch(e) { return { intros: [], outros: [] }; }
 }
 function saveSkipData(key, data) {
     GM_setValue('vtvUlt_skipData' + key, JSON.stringify(data));

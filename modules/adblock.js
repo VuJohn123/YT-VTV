@@ -26,7 +26,7 @@ function startAdBlocking() {
         document.querySelectorAll('iframe[src*="doubleclick"],iframe[src*="googleads"],iframe[src*="adservice"]').forEach(el => el.style.display = 'none');
     };
     adObserver = new MutationObserver(hideAds);
-    adObserver.observe(document.body, { childList: true, subtree: true, attributes: true });
+    adObserver.observe(document.body, { childList: true, subtree: true }); // KHÔNG dùng attributes:true (quá tốn hiệu năng)
     hideAds();
 }
 

@@ -38,7 +38,7 @@ async function findNext(info, channel) {
     if (candidates.length === 0) {
         if (info.season) {
             const ns = info.season + 1;
-            const ct = `${info.series} tập 1 - P${ns} (1/${info.totalSeg || 1})`;
+            const ct = `${info.series} tập 1 - P${ns}`; // không thêm segment vì không biết totalSeg mùa mới
             r = await searchYT(mk(ct));
             const cv = r.filter(v => parseTitle(v.title)?.season === ns);
             if (cv.length) return {url: `https://youtu.be/${cv[0].videoId}`, title: cv[0].title, source:'newseason'};
