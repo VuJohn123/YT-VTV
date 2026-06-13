@@ -266,20 +266,25 @@ function renderOutOfOrder(current, expected, expectedUrl) {
     document.getElementById('vtv-stay')?.addEventListener('click', () => { clearSeries(seriesKey); main(); });
 }
 
+function onLoadedMetadata() {
+    if (videoEl && videoEl.duration && videoEl.duration < AD_MAX_DURATION) { adVideoDetected = true; cancelRedirect(); }
+    else adVideoDetected = false;
+}
+
 function setupMonitoring() {
     log('Setting up monitoring');
-    if (videoEl) { videoEl.removeEventListener('ended', onVideoEnded); videoEl.removeEventListener('seeked', onSeeked); }
+    if (videoEl) {
+        videoEl.removeEventListener('ended', onVideoEnded);
+        videoEl.removeEventListener('seeked', onSeeked);
+        videoEl.removeEventListener('loadedmetadata', onLoadedMetadata);
+    }
     videoEl = document.querySelector('video.html5-main-video');
     if (!videoEl) { log('Video element not found, retrying...'); setTimeout(setupMonitoring, 1000); return; }
     log('Video element found, duration:', videoEl.duration);
     if (timeCheckInterval) clearInterval(timeCheckInterval);
     vtvLastTime = videoEl.currentTime;
     if (seriesKey && autoSkip) setTimeout(() => applyAutoSkip(seriesKey), 2000);
-    const checkAd = () => {
-        if (videoEl && videoEl.duration && videoEl.duration < AD_MAX_DURATION) { adVideoDetected = true; cancelRedirect(); }
-        else adVideoDetected = false;
-    };
-    videoEl.addEventListener('loadedmetadata', checkAd); checkAd();
+    videoEl.addEventListener('loadedmetadata', onLoadedMetadata); onLoadedMetadata();
     timeCheckInterval = setInterval(() => {
         if (!videoEl || !autoPlay || !nextUrl || redirectScheduled || adVideoDetected) return;
         const rem = videoEl.duration - videoEl.currentTime;

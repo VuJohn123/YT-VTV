@@ -86,7 +86,7 @@
 
         if (document.querySelector('ytd-message-renderer #message') || document.body.innerText.includes('Video unavailable')) {
             setTitle('⚠️ Video không khả dụng');
-            setBody('<div>Video bị gỡ hoặc riêng tư.</div>');
+            setBody('<div>Video bị gỡ hoặc riêng tư.</div><div id="vtv-panel-content"></div>');
             addToggles('vtv-panel-content');
             mainRunning = false;
             return;
@@ -97,7 +97,7 @@
             const ap = getYouTubeAutoplay();
             if (ap) {
                 setTitle('🎞️ Gợi ý YouTube');
-                setBody(`<div class="next-title">${escapeHTML(ap.title)}</div><button id="vtv-skip">⏭ Xem ngay</button>`);
+                setBody(`<div class="next-title">${escapeHTML(ap.title)}</div><button id="vtv-skip">⏭ Xem ngay</button><div id="vtv-panel-content"></div>`);
                 document.getElementById('vtv-skip')?.addEventListener('click', () => { if (ap.url) window.location.href = ap.url; });
                 nextUrl = ap.url; nextTitle = ap.title;
             } else {
@@ -149,7 +149,7 @@
             storeSeries(seriesKey, info.episode, nextUrl, nextTitle);
         } else {
             setTitle('❌ Không tìm thấy tập kế');
-            setBody(`<input type="text" id="vtv-manual" placeholder="Tìm tập..."><button id="vtv-manual-btn">Tìm</button><div id="vtv-panel-content"></div>`);
+            setBody(`<input type="text" id="vtv-manual" placeholder="Tìm tập..."><button id="vtv-manual-btn">Tìm</button><div id="episode-list-container" style="display:${playlistVisible ? '' : 'none'}"></div><div id="vtv-panel-content"></div>`);
             document.getElementById('vtv-manual-btn')?.addEventListener('click', async () => {
                 const q = document.getElementById('vtv-manual')?.value.trim();
                 if (q) {
@@ -159,6 +159,10 @@
                 }
             });
             addToggles('vtv-panel-content');
+            if (episodeList.length) {
+                const ec = document.getElementById('episode-list-container');
+                if (ec) ec.innerHTML = '<ul class="episode-list">' + episodeList.map(e => `<li><a href="${e.url}" class="${e.isCurrent ? 'current' : ''}">${e.isCurrent ? '📌' : '📺'} ${escapeHTML(e.title)}</a></li>`).join('') + '</ul>';
+            }
             const ap = getYouTubeAutoplay();
             if (ap) { nextUrl = ap.url; nextTitle = ap.title; }
         }

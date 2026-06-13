@@ -1,14 +1,15 @@
 // network-optimizer.js - Tự động tăng buffer, điều chỉnh chất lượng khi mạng kém
 let originalPlaybackRate = 1;
 
+let _connectionListenerAdded = false;
+
 function optimizeConnection() {
     // Đặt preload = auto
     if (videoEl) {
         videoEl.preload = 'auto';
-        // Tăng buffer bằng cách seek nhẹ? Không thể ép, nhưng có thể giảm playback khi mạng kém
-        // Dùng Network Information API nếu có
-        if (navigator.connection) {
+        if (navigator.connection && !_connectionListenerAdded) {
             navigator.connection.addEventListener('change', onConnectionChange);
+            _connectionListenerAdded = true;
             onConnectionChange(); // Kiểm tra ngay
         }
     }
