@@ -1,58 +1,84 @@
-async function waitForElementsDefined() {
-    await Promise.all([
-        customElements.whenDefined('ytd-channel-name'),
-        customElements.whenDefined('ytd-video-owner-renderer')
-    ]);
-}
-function getChannelNameFromPlayerResponse() {
-    try {
-        const p = typeof unsafeWindow !== 'undefined' ? unsafeWindow.ytInitialPlayerResponse : window.ytInitialPlayerResponse;
-        if (p?.videoDetails?.author) return p.videoDetails.author;
-    } catch(e) {}
-    return null;
-}
-function getTextFromElement(el, sel) {
-    if (!el) return null;
-    if (el.shadowRoot) { const f = el.shadowRoot.querySelector(sel); if (f?.textContent.trim()) return f.textContent.trim(); }
-    const f = el.querySelector(sel); return f?.textContent.trim() || null;
-}
-function getTextFromAllLinks(el) {
-    if (!el) return null;
-    const links = el.shadowRoot ? el.shadowRoot.querySelectorAll('a.yt-simple-endpoint') : el.querySelectorAll('a.yt-simple-endpoint');
-    for (const l of links) { const t = l.textContent.trim(); if (t) return t; }
-    return null;
-}
-function getChannelNameFromDOM() {
-    const owner = document.querySelector('ytd-video-owner-renderer');
-    if (owner) {
-        for (const sel of ['#owner a.yt-simple-endpoint', '#channel-name a', '#text-container a', 'a.yt-simple-endpoint']) {
-            const t = getTextFromElement(owner, sel); if (t) return t;
-        }
-        const t = getTextFromAllLinks(owner); if (t) return t;
+// channel-detect.js — Layer 1: Resolve YouTube channel name from DOM / ytInitialPlayerResponse
+// Pure async logic, không ghi bất kỳ global state nào.
+
+const ChannelDetect = (() => {
+    async function _waitForDefined() {
+        await Promise.all([
+            customElements.whenDefined('ytd-channel-name'),
+            customElements.whenDefined('ytd-video-owner-renderer'),
+        ]);
     }
-    const channelEls = document.querySelectorAll('ytd-channel-name');
-    for (const c of channelEls) {
-        for (const sel of ['a.yt-simple-endpoint', '#text a', '#text-container a', 'a']) {
-            const t = getTextFromElement(c, sel); if (t) return t;
-        }
-        const t = getTextFromAllLinks(c); if (t) return t;
+
+    function _fromPlayerResponse() {
+        try {
+            const p = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window).ytInitialPlayerResponse;
+            if (p?.videoDetails?.author) return p.videoDetails.author;
+        } catch (e) {}
+        return null;
     }
-    const oc = document.querySelector('#owner-container'); if (oc) { const a = oc.querySelector('a.yt-simple-endpoint'); if (a?.textContent.trim()) return a.textContent.trim(); }
-    const cn = document.querySelector('#channel-name'); if (cn) { const a = cn.querySelector('a'); if (a?.textContent.trim()) return a.textContent.trim(); }
-    const all = document.querySelectorAll('a.yt-simple-endpoint');
-    for (const a of all) {
-        const t = a.textContent.trim();
-        if (t && t.length > 3 && !t.includes('subscribe') && !t.includes('Subscribed')) {
-            const h = a.getAttribute('href');
-            if (h && (h.startsWith('/@') || h.startsWith('/channel/'))) return t;
+
+    function _textFromEl(el, sel) {
+        if (!el) return null;
+        if (el.shadowRoot) {
+            const f = el.shadowRoot.querySelector(sel);
+            if (f?.textContent.trim()) return f.textContent.trim();
         }
+        return el.querySelector(sel)?.textContent.trim() || null;
     }
-    return null;
-}
-function getChannelName() { return getChannelNameFromPlayerResponse() || getChannelNameFromDOM(); }
-async function waitForChannel() {
-    await waitForElementsDefined();
-    await new Promise(r => setTimeout(r, 500));
-    for (let i = 0; i < 40; i++) { const n = getChannelName(); if (n) return n; await new Promise(r => setTimeout(r, 400)); }
-    return '';
-}
+
+    function _textFromLinks(el) {
+        if (!el) return null;
+        const root = el.shadowRoot ?? el;
+        for (const l of root.querySelectorAll('a.yt-simple-endpoint')) {
+            const t = l.textContent.trim();
+            if (t) return t;
+        }
+        return null;
+    }
+
+    function _fromDOM() {
+        // ytd-video-owner-renderer
+        const owner = document.querySelector('ytd-video-owner-renderer');
+        if (owner) {
+            for (const sel of ['#owner a.yt-simple-endpoint', '#channel-name a', '#text-container a', 'a.yt-simple-endpoint']) {
+                const t = _textFromEl(owner, sel);
+                if (t) return t;
+            }
+            const t = _textFromLinks(owner);
+            if (t) return t;
+        }
+        // ytd-channel-name elements
+        for (const c of document.querySelectorAll('ytd-channel-name')) {
+            for (const sel of ['a.yt-simple-endpoint', '#text a', '#text-container a', 'a']) {
+                const t = _textFromEl(c, sel);
+                if (t) return t;
+            }
+            const t = _textFromLinks(c);
+            if (t) return t;
+        }
+        // Fallback: any channel-href anchor
+        for (const a of document.querySelectorAll('a.yt-simple-endpoint')) {
+            const text = a.textContent.trim();
+            const href = a.getAttribute('href') || '';
+            if (text && text.length > 3 && (href.startsWith('/@') || href.startsWith('/channel/'))) return text;
+        }
+        return null;
+    }
+
+    /**
+     * Wait up to ~16 seconds for the channel name to appear.
+     * @returns {Promise<string>} — empty string if not found
+     */
+    async function resolve() {
+        await _waitForDefined();
+        await new Promise(r => setTimeout(r, 500));
+        for (let i = 0; i < 40; i++) {
+            const name = _fromPlayerResponse() || _fromDOM();
+            if (name) return name;
+            await new Promise(r => setTimeout(r, 400));
+        }
+        return '';
+    }
+
+    return { resolve };
+})();
