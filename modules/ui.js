@@ -138,34 +138,39 @@ GM_addStyle(`
 /* ── Toggle grid ────────────────────────────────────────────────────────── */
 #vtv-toggles {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 5px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
 }
 .vtv-tog {
-    display: flex; align-items: center; gap: 7px;
-    padding: 6px 9px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 3px;
+    padding: 7px 4px 6px; border-radius: 9px;
     background: rgba(255,255,255,0.05);
-    cursor: pointer; transition: background .15s;
-    font-size: 12px; color: #aaa;
+    cursor: pointer; transition: background .15s, border-color .15s;
     border: 1px solid transparent;
+    min-width: 0; overflow: hidden;
 }
 .vtv-tog:hover { background: rgba(255,255,255,0.09); }
-.vtv-tog.vtv-on { background: rgba(62,166,255,0.13); border-color: rgba(62,166,255,0.22); color: #c8e4ff; }
+.vtv-tog.vtv-on { background: rgba(62,166,255,0.13); border-color: rgba(62,166,255,0.25); }
 .vtv-tog input { display: none; }
-.vtv-sw {
-    width: 28px; height: 16px; flex-shrink: 0;
-    background: rgba(255,255,255,0.15); border-radius: 99px;
-    position: relative; transition: background .2s;
+.vtv-tog-icon {
+    font-size: 15px; line-height: 1; flex-shrink: 0;
+    position: relative;
 }
-.vtv-sw::after {
-    content: ''; position: absolute;
-    top: 2px; left: 2px;
-    width: 12px; height: 12px; border-radius: 50%;
-    background: #fff; transition: transform .2s, box-shadow .2s;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+.vtv-tog-icon::after {
+    content: '';
+    position: absolute; bottom: -2px; right: -3px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #444; transition: background .2s;
 }
-.vtv-tog.vtv-on .vtv-sw { background: #3ea6ff; }
-.vtv-tog.vtv-on .vtv-sw::after { transform: translateX(12px); box-shadow: 0 1px 4px rgba(62,166,255,0.5); }
+.vtv-tog.vtv-on .vtv-tog-icon::after { background: #3ea6ff; }
+.vtv-tog-lbl {
+    font-size: 10px; color: #777; letter-spacing: .1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 100%; text-align: center;
+    transition: color .15s; line-height: 1.1;
+}
+.vtv-tog.vtv-on .vtv-tog-lbl { color: #7ab8f5; }
 
 /* ── Episode list ───────────────────────────────────────────────────────── */
 #vtv-list-wrap {
@@ -390,11 +395,11 @@ const UI = (() => {
     // ─── Toggles ──────────────────────────────────────────────────────────────
     const TOGGLE_DEFS = [
         { id: 'tog-auto',     flag: 'autoPlay',     gm: 'auto',      icon: '⏭', label: 'Tự chuyển' },
-        { id: 'tog-marathon', flag: 'marathon',     gm: 'marathon',  icon: '🏃', label: 'Marathon' },
-        { id: 'tog-skip',     flag: 'autoSkip',     gm: 'autoskip',  icon: '⏩', label: 'Auto Skip' },
-        { id: 'tog-voice',    flag: 'voiceEnabled', gm: 'voice',     icon: '🎤', label: 'Voice (V)' },
-        { id: 'tog-audio',    flag: 'audioMode',    gm: 'audioMode', icon: '🔇', label: 'Audio Mode' },
-        { id: 'tog-pip',      flag: 'pipEnabled',   gm: 'pip',       icon: '🖼️', label: 'PiP' },
+        { id: 'tog-marathon', flag: 'marathon',     gm: 'marathon',  icon: '🏃', label: 'Marathon'  },
+        { id: 'tog-skip',     flag: 'autoSkip',     gm: 'autoskip',  icon: '⏩', label: 'Skip Intro'},
+        { id: 'tog-voice',    flag: 'voiceEnabled', gm: 'voice',     icon: '🎤', label: 'Voice'     },
+        { id: 'tog-audio',    flag: 'audioMode',    gm: 'audioMode', icon: '🔇', label: 'Audio'     },
+        { id: 'tog-pip',      flag: 'pipEnabled',   gm: 'pip',       icon: '🖼',  label: 'PiP'       },
     ];
 
     function _renderToggles() {
@@ -406,7 +411,8 @@ const UI = (() => {
             const tog = document.createElement('label');
             tog.className = 'vtv-tog' + (on ? ' vtv-on' : '');
             tog.id = def.id;
-            tog.innerHTML = `<input type="checkbox" ${on ? 'checked' : ''}><span class="vtv-sw"></span>${def.icon} ${def.label}`;
+            tog.title = def.label;
+            tog.innerHTML = `<input type="checkbox" ${on ? 'checked' : ''}><span class="vtv-tog-icon">${def.icon}</span><span class="vtv-tog-lbl">${def.label}</span>`;
             tog.querySelector('input').addEventListener('change', e => {
                 const val = e.target.checked;
                 _flags[def.flag] = val;
