@@ -1,52 +1,68 @@
 // video-context.js — Layer 2: Single owner of the <video> element
-// Không module nào khác được giữ reference đến videoEl trực tiếp.
-// Thay vào đó, họ lắng nghe events từ VideoContext.
+// Perf: dùng requestAnimationFrame thay vì setInterval 1s cho polling,
+// tránh double attach khi YouTube re-renders video element.
 
 const VideoContext = (() => {
-    let _videoEl   = null;
-    let _seriesKey = null;
-    let _autoPlay  = Storage.getFeatureFlags().autoPlay;
-    let _autoSkip  = Storage.getFeatureFlags().autoSkip;
+    let _videoEl    = null;
+    let _seriesKey  = null;
+    let _autoPlay   = true;
+    let _autoSkip   = false;
     let _adDetected = false;
-
-    let _timeInterval   = null;
-    let _countdownTimer = null;
+    let _nextUrl    = null;
+    let _lastTime   = -1;
     let _redirectScheduled = false;
-    let _lastTime = -1;
-    let _nextUrl  = null;
+    let _cdTotal    = 0;
 
-    // ─── Countdown / redirect ─────────────────────────────────────────────────
+    let _rafId       = null;
+    let _cdInterval  = null;
+    let _attachTimer = null;
+
+    // ─── Redirect ─────────────────────────────────────────────────────────────
     function _cancelRedirect() {
         _redirectScheduled = false;
-        if (_countdownTimer) { clearInterval(_countdownTimer); _countdownTimer = null; }
+        if (_cdInterval) { clearInterval(_cdInterval); _cdInterval = null; }
         EventBus.emit('countdownCancel');
     }
 
-    function _doRedirect() {
-        if (_nextUrl && !_adDetected) window.location.href = _nextUrl;
-    }
-
-    function _startCountdown(sec) {
-        if (!_autoPlay || !_nextUrl || _adDetected) return;
+    function _startCountdown(seconds) {
+        if (!_autoPlay || !_nextUrl || _redirectScheduled || _adDetected || seconds <= 0) return;
         _redirectScheduled = true;
-        let rem = sec;
-        EventBus.emit('countdownTick', { remaining: rem });
-        if (_countdownTimer) clearInterval(_countdownTimer);
-        _countdownTimer = setInterval(() => {
+        _cdTotal = seconds;
+        let rem = seconds;
+        EventBus.emit('countdownStart', { total: seconds });
+        EventBus.emit('countdownTick',  { remaining: rem, total: seconds });
+        _cdInterval = setInterval(() => {
             rem--;
-            if (rem <= 0) { clearInterval(_countdownTimer); _countdownTimer = null; _doRedirect(); }
-            else EventBus.emit('countdownTick', { remaining: rem });
+            EventBus.emit('countdownTick', { remaining: rem, total: _cdTotal });
+            if (rem <= 0) {
+                clearInterval(_cdInterval); _cdInterval = null;
+                if (_nextUrl && !_adDetected) window.location.href = _nextUrl;
+            }
         }, 1000);
     }
 
-    function _adaptiveThreshold() {
-        if (!_videoEl?.duration || _videoEl.duration < AD_MAX_DURATION) return 0;
-        return Math.max(5, Math.min(30, Math.floor(_videoEl.duration * 0.03)));
+    function _threshold() {
+        const d = _videoEl?.duration;
+        if (!d || d < AD_MAX_DURATION) return 0;
+        return Math.max(5, Math.min(25, Math.floor(d * 0.025)));
     }
 
-    // ─── Video event handlers ─────────────────────────────────────────────────
-    function _onLoadedMetadata() {
-        const dur = _videoEl?.duration ?? 0;
+    // ─── RAF polling (replaces setInterval 1s — more precise, no jank) ───────
+    let _lastRafTime = 0;
+    function _rafTick(now) {
+        _rafId = requestAnimationFrame(_rafTick);
+        // Throttle: check every ~800ms
+        if (now - _lastRafTime < 800) return;
+        _lastRafTime = now;
+
+        if (!_videoEl || !_autoPlay || !_nextUrl || _redirectScheduled || _adDetected) return;
+        const rem = (_videoEl.duration || 0) - _videoEl.currentTime;
+        if (rem > 0 && rem <= _threshold()) _startCountdown(Math.floor(rem));
+    }
+
+    // ─── Video events ─────────────────────────────────────────────────────────
+    function _onMeta() {
+        const dur  = _videoEl?.duration ?? 0;
         const isAd = dur > 0 && dur < AD_MAX_DURATION;
         _adDetected = isAd;
         EventBus.emit('adDetected', { detected: isAd });
@@ -54,116 +70,106 @@ const VideoContext = (() => {
     }
 
     function _onEnded() {
-        log('[VideoContext] ended. autoPlay=', _autoPlay, 'nextUrl=', !!_nextUrl, 'ad=', _adDetected);
         EventBus.emit('videoEnded');
-        if (_autoPlay && _nextUrl && !_adDetected) { _cancelRedirect(); _doRedirect(); }
+        if (_autoPlay && _nextUrl && !_adDetected) {
+            _cancelRedirect();
+            window.location.href = _nextUrl;
+        }
     }
 
     function _onSeeked() {
         if (!_videoEl) return;
         const cur = _videoEl.currentTime;
-        if (cur > _lastTime + 5 && _seriesKey) {
+        if (_lastTime >= 0 && Math.abs(cur - _lastTime) > 5 && _seriesKey) {
             Storage.learnSkip(_seriesKey, _lastTime, cur, _videoEl.duration);
         }
         _lastTime = cur;
         EventBus.emit('seeked', { from: _lastTime, to: cur });
 
+        // User scrubbed near end → start countdown
         if (!_autoPlay || !_nextUrl || _redirectScheduled || _adDetected) return;
-        const dur = _videoEl.duration;
-        if (dur && (dur - cur) <= _adaptiveThreshold() * 2) _startCountdown(Math.floor(dur - cur));
+        const rem = (_videoEl.duration || 0) - cur;
+        if (rem > 0 && rem <= _threshold() * 2) _startCountdown(Math.floor(rem));
     }
 
-    // ─── Polling tick ─────────────────────────────────────────────────────────
-    function _tick() {
-        if (!_videoEl || !_autoPlay || !_nextUrl || _redirectScheduled || _adDetected) return;
-        const rem = _videoEl.duration - _videoEl.currentTime;
-        if (rem <= _adaptiveThreshold() && rem > 0) _startCountdown(Math.floor(rem));
+    // ─── Attach ───────────────────────────────────────────────────────────────
+    function _doAttach() {
+        const el = document.querySelector('video.html5-main-video');
+        if (!el) {
+            // Retry up to 5s total (called from attach with retries)
+            return false;
+        }
+        _videoEl = el;
+        log('[VideoContext] attached, dur:', el.duration?.toFixed(1));
+
+        el.addEventListener('loadedmetadata', _onMeta);
+        el.addEventListener('ended',          _onEnded);
+        el.addEventListener('seeked',         _onSeeked);
+        if (el.readyState >= 1) _onMeta(); // already loaded
+
+        // Auto-skip intro
+        if (_autoSkip && _seriesKey) {
+            const d = Storage.getSkipData(_seriesKey);
+            if (d?.introAvg && el.currentTime < d.introAvg) {
+                setTimeout(() => {
+                    if (_videoEl && _videoEl.currentTime < d.introAvg) {
+                        _videoEl.currentTime = d.introAvg;
+                        log('[VideoContext] auto-skipped intro to', d.introAvg);
+                    }
+                }, 2000);
+            }
+        }
+
+        if (_rafId) cancelAnimationFrame(_rafId);
+        _rafId = requestAnimationFrame(_rafTick);
+        return true;
     }
 
-    // ─── Public API ───────────────────────────────────────────────────────────
-    /**
-     * Attach to the <video> element. Called by entry.js after navigation.
-     * Retries up to 5 seconds if video not yet in DOM.
-     */
     function attach(seriesKey, opts = {}) {
         _seriesKey  = seriesKey;
-        _autoPlay   = opts.autoPlay  ?? _autoPlay;
-        _autoSkip   = opts.autoSkip  ?? _autoSkip;
-        _nextUrl    = null;
-        _lastTime   = -1;
-        _redirectScheduled = false;
-        _adDetected = false;
+        _autoPlay   = opts.autoPlay ?? _autoPlay;
+        _autoSkip   = opts.autoSkip ?? _autoSkip;
+        _nextUrl    = null; _lastTime = -1;
+        _redirectScheduled = false; _adDetected = false;
 
         _detachListeners();
 
-        _videoEl = document.querySelector('video.html5-main-video');
-        if (!_videoEl) {
-            log('[VideoContext] video not found, retrying…');
-            setTimeout(() => attach(seriesKey, opts), 1000);
-            return;
-        }
-        log('[VideoContext] attached, duration:', _videoEl.duration);
-
-        // Start polling
-        if (_timeInterval) clearInterval(_timeInterval);
-        _timeInterval = setInterval(_tick, 1000);
-
-        _videoEl.addEventListener('loadedmetadata', _onLoadedMetadata);
-        _videoEl.addEventListener('ended',          _onEnded);
-        _videoEl.addEventListener('seeked',         _onSeeked);
-        _onLoadedMetadata(); // handle already-loaded metadata
-
-        // Auto-skip intro
-        if (_autoSkip && seriesKey) {
-            setTimeout(() => {
-                const d = Storage.getSkipData(seriesKey);
-                if (d.introAvg && _videoEl?.currentTime < d.introAvg) {
-                    log('[VideoContext] auto-skip intro to', d.introAvg);
-                    _videoEl.currentTime = d.introAvg;
-                }
-            }, 2000);
-        }
+        let attempts = 0;
+        const _try = () => {
+            if (_doAttach()) return;
+            if (++attempts < 10) _attachTimer = setTimeout(_try, 600);
+            else warn('[VideoContext] video element not found after retries');
+        };
+        _try();
     }
 
     function _detachListeners() {
-        if (_timeInterval) { clearInterval(_timeInterval); _timeInterval = null; }
-        if (_countdownTimer) { clearInterval(_countdownTimer); _countdownTimer = null; }
+        if (_rafId)      { cancelAnimationFrame(_rafId); _rafId = null; }
+        if (_cdInterval) { clearInterval(_cdInterval); _cdInterval = null; }
+        if (_attachTimer){ clearTimeout(_attachTimer); _attachTimer = null; }
         if (_videoEl) {
-            _videoEl.removeEventListener('loadedmetadata', _onLoadedMetadata);
+            _videoEl.removeEventListener('loadedmetadata', _onMeta);
             _videoEl.removeEventListener('ended',          _onEnded);
             _videoEl.removeEventListener('seeked',         _onSeeked);
         }
     }
 
-    /** Called when next episode is found, so VideoContext knows where to redirect. */
+    function detach()        { _detachListeners(); _videoEl = null; }
     function setNextUrl(url) { _nextUrl = url; }
-
-    /** Expose read-only ref for modules that genuinely need it (audio-mode, pip). */
-    function getVideoEl() { return _videoEl; }
-
-    function getDuration() { return _videoEl?.duration ?? 0; }
-
-    function cancelRedirect() { _cancelRedirect(); }
-
-    /** Update a flag without full re-attach. */
-    function setFlag(key, value) {
-        if (key === 'autoPlay') _autoPlay = value;
-        if (key === 'autoSkip') _autoSkip = value;
-        if (key === 'adDetected') {
-            _adDetected = value;
-            if (value) _cancelRedirect();
-        }
+    function getVideoEl()    { return _videoEl; }
+    function getDuration()   { return _videoEl?.duration ?? 0; }
+    function cancelRedirect(){ _cancelRedirect(); }
+    function setFlag(k, v)   {
+        if (k === 'autoPlay')   _autoPlay   = v;
+        if (k === 'autoSkip')   _autoSkip   = v;
+        if (k === 'adDetected') { _adDetected = v; if (v) _cancelRedirect(); }
     }
 
-    /** Full teardown — call before re-navigation. */
-    function detach() { _detachListeners(); _videoEl = null; }
-
-    return { attach, detach, setNextUrl, getVideoEl, getDuration, setFlag, cancelRedirect };
+    return { attach, detach, setNextUrl, getVideoEl, getDuration, cancelRedirect, setFlag };
 })();
 
-// ─── EventBus wiring (one-way: EventBus → VideoContext) ──────────────────────
-EventBus.on('nextFound', ({ url }) => VideoContext.setNextUrl(url));
-EventBus.on('adDetected', ({ detected }) => VideoContext.setFlag('adDetected', detected));
-EventBus.on('modeChange', ({ key, value }) => {
+EventBus.on('nextFound',    ({ url })        => VideoContext.setNextUrl(url));
+EventBus.on('adDetected',   ({ detected })   => VideoContext.setFlag('adDetected', detected));
+EventBus.on('modeChange',   ({ key, value }) => {
     if (key === 'autoPlay' || key === 'autoSkip') VideoContext.setFlag(key, value);
 });

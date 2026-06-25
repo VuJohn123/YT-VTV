@@ -1,242 +1,276 @@
 // episode-navigator.js — Layer 2: Episode discovery engine
-// Nhận ParsedInfo + channel, emit events qua EventBus.
-// Không giữ state giữa các navigations.
+// Fixes:
+//   1. Cache miss bug: episodeList được cache đúng theo seriesKey
+//   2. Missing episode detection chạy sau khi list đã đầy đủ
+//   3. findNext/findPrev ưu tiên list cache, fallback search với fuzzy match
+//   4. Không re-search nếu đã có hit trong cache
 
 const EpisodeEngine = (() => {
+    // ─── Per-series episode list cache (in-memory, session) ───────────────────
+    // seriesKey → { list: Array, timestamp: number }
+    const _listCache = new Map();
+    const LIST_CACHE_TTL = 10 * 60_000; // 10 min
+
+    function _getCachedList(seriesKey) {
+        const hit = _listCache.get(seriesKey);
+        if (hit && Date.now() - hit.timestamp < LIST_CACHE_TTL) return hit.list;
+        return null;
+    }
+
+    function _cacheList(seriesKey, list) {
+        _listCache.set(seriesKey, { list, timestamp: Date.now() });
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
-    function _matchesSeries(parsed, info) {
-        if (!parsed?.series || parsed.series !== info.series) return false;
-        if (info.season && parsed.season !== null && parsed.season !== info.season) return false;
-        return true;
+    function _seriesMatch(parsed, info) {
+        if (!parsed?.episode) return false;
+        // Loose series match: normalized lowercase, allow partial
+        const a = (parsed.series || '').toLowerCase().trim();
+        const b = (info.series   || '').toLowerCase().trim();
+        if (!a || !b) return false;
+        if (a === b) return true;
+        // One contains the other (handles trailing noise)
+        if (a.includes(b) || b.includes(a)) return true;
+        // Shared prefix ≥ 6 chars
+        let common = 0;
+        for (let i = 0; i < Math.min(a.length, b.length); i++) {
+            if (a[i] === b[i]) common++; else break;
+        }
+        if (common >= 6) return true;
+        return false;
     }
 
-    function _sortBySegment(candidates, desc = false) {
-        return [...candidates].sort((a, b) => {
-            const pa = parseTitle(a.title ?? a.episode?.toString() ?? '');
-            const pb = parseTitle(b.title ?? b.episode?.toString() ?? '');
-            const diff = (pa.segment || 0) - (pb.segment || 0);
-            return desc ? -diff : diff;
-        });
+    function _seasonMatch(parsed, info) {
+        if (!info.season) return true; // no season constraint
+        if (parsed.season === null) return true; // video has no season tag → accept
+        return parsed.season === info.season;
     }
 
-    // ─── findNext ─────────────────────────────────────────────────────────────
-    /**
-     * @param {ParsedInfo}    info
-     * @param {string}        channel
-     * @param {Array}         episodeList  — already-built list (fast path)
-     * @returns {Promise<{url:string, title:string, source:string}|null>}
-     */
-    async function findNext(info, channel, episodeList = []) {
-        // Fast path: episode list already available
-        if (episodeList.length > 0) {
-            const nextEp = info.episode + 1;
-            const candidates = episodeList.filter(e =>
-                e.episode === nextEp && (!info.season || e.season === info.season || e.season === null)
-            );
-            if (candidates.length) {
-                const chosen = _sortBySegment(candidates)[0];
-                return { url: chosen.url, title: chosen.title, source: 'cached' };
-            }
-        }
-
-        const partStr = info.season ? ` - P${info.season}` : '';
-
-        // Next segment of the same episode
-        if (info.segment && info.totalSeg && info.segment < info.totalSeg) {
-            const segTitle = `${info.series} tập ${info.episode}${partStr} (${info.segment + 1}/${info.totalSeg})`;
-            let r = await Search.search(Search.mkQuery(segTitle, channel));
-            let v = r.filter(v => v.title.includes(`(${info.segment + 1}/${info.totalSeg})`));
-            if (!v.length && channel) {
-                r = await Search.search(segTitle);
-                v = r.filter(v => v.title.includes(`(${info.segment + 1}/${info.totalSeg})`));
-            }
-            if (v.length) return { url: `https://youtu.be/${v[0].videoId}`, title: v[0].title, source: 'segment' };
-            return null;
-        }
-
-        // Next episode
-        const nextEp    = info.episode + 1;
-        const baseTitle = `${info.series} tập ${nextEp}${partStr}`;
-        let r = await Search.search(Search.mkQuery(baseTitle, channel));
-        if (!r.length && channel) r = await Search.search(baseTitle);
-
-        let candidates = r.filter(v => {
-            const p = parseTitle(v.title);
-            return _matchesSeries(p, info) && p.episode === nextEp;
-        });
-
-        // Try next season
-        if (!candidates.length && info.season) {
-            const ns = info.season + 1;
-            const ct = `${info.series} tập 1 - P${ns}`;
-            r = await Search.search(Search.mkQuery(ct, channel));
-            const cv = r.filter(v => parseTitle(v.title)?.season === ns);
-            if (cv.length) return { url: `https://youtu.be/${cv[0].videoId}`, title: cv[0].title, source: 'newseason' };
-            return null;
-        }
-
-        if (!candidates.length) return null;
-        const chosen = _sortBySegment(candidates)[0];
-        return { url: `https://youtu.be/${chosen.videoId}`, title: chosen.title, source: 'episode' };
+    function _sortByEpSeg(arr) {
+        return [...arr].sort((a, b) =>
+            a.episode !== b.episode
+                ? a.episode - b.episode
+                : (a.segment || 0) - (b.segment || 0)
+        );
     }
 
-    // ─── findPrevious ─────────────────────────────────────────────────────────
-    async function findPrevious(info, channel, episodeList = []) {
-        const pe = info.episode - 1;
-        if (pe < 1) return null;
-
-        if (episodeList.length > 0) {
-            const candidates = episodeList.filter(e =>
-                e.episode === pe && (!info.season || e.season === info.season || e.season === null)
-            );
-            if (candidates.length) {
-                const chosen = _sortBySegment(candidates, true)[0]; // highest segment
-                return { url: chosen.url, title: chosen.title, episode: pe };
-            }
+    // ─── Build episode list ───────────────────────────────────────────────────
+    async function _buildList(info, channel, seriesKey, vpData) {
+        // Check in-memory cache first
+        const cached = _getCachedList(seriesKey);
+        if (cached) {
+            log('[EpisodeEngine] list cache hit:', seriesKey, cached.length, 'eps');
+            return cached;
         }
 
-        const partStr   = info.season ? ` - P${info.season}` : '';
-        const baseTitle = `${info.series} tập ${pe}${partStr}`;
-        let r = await Search.search(Search.mkQuery(baseTitle, channel));
-        if (!r.length && channel) r = await Search.search(baseTitle);
+        const list = [];
+        const seen = new Set();
 
-        const candidates = r.filter(v => {
-            const p = parseTitle(v.title);
-            return _matchesSeries(p, info) && p.episode === pe;
-        });
-        if (!candidates.length) return null;
-        const chosen = _sortBySegment(candidates, true)[0];
-        return { url: `https://youtu.be/${chosen.videoId}`, title: chosen.title, episode: pe };
-    }
+        const _add = (videoId, episode, season, title, url, isCurrent = false, segment = 0, totalSeg = 1) => {
+            if (!videoId || seen.has(videoId)) return;
+            seen.add(videoId);
+            list.push({ videoId, episode, season, title, url, isCurrent, segment, totalSeg });
+        };
 
-    // ─── findEpisodeList ──────────────────────────────────────────────────────
-    async function findEpisodeList(info, channel, virtualPlaylistData) {
-        const list    = [];
-        const partStr = info.season ? ` - P${info.season}` : '';
-        const ce      = info.episode;
+        // Seed: current video
+        const currentVid = new URLSearchParams(location.search).get('v');
+        const currentTitle = document.querySelector('h1.ytd-watch-metadata yt-formatted-string')
+            ?.textContent?.trim() || `Tập ${info.episode}`;
+        _add(currentVid, info.episode, info.season, currentTitle, location.href, true,
+            info.segment || 0, info.totalSeg || 1);
 
-        // Seed with current video
-        list.push({
-            videoId:  new URLSearchParams(location.search).get('v'),
-            episode:  ce,
-            season:   info.season,
-            url:      location.href,
-            title:    document.querySelector('h1.ytd-watch-metadata yt-formatted-string')?.textContent?.trim() || `Tập ${ce}`,
-            isCurrent: true,
-            segment:  info.segment || 0,
-            totalSeg: info.totalSeg || 1,
-        });
-
-        const _addVideos = (videos) => {
-            for (const vid of videos) {
-                if (!vid.videoId) continue;
-                const p = parseTitle(vid.title);
-                if (!p?.episode) continue;
-                if (p.series !== info.series) continue;
-                if (info.season && p.season !== null && p.season !== info.season) continue;
-                list.push({
-                    videoId:  vid.videoId,
-                    episode:  p.episode,
-                    season:   p.season,
-                    url:      `https://youtu.be/${vid.videoId}`,
-                    title:    vid.title,
-                    isCurrent: false,
-                    segment:  p.segment || 0,
-                    totalSeg: p.totalSeg || 1,
-                });
+        const _ingest = (videos) => {
+            for (const v of videos) {
+                if (!v.videoId) continue;
+                const p = parseTitle(v.title || '');
+                if (!p.episode) continue;
+                if (!_seriesMatch(p, info)) continue;
+                if (!_seasonMatch(p, info)) continue;
+                _add(
+                    v.videoId, p.episode, p.season,
+                    v.title,
+                    v.url || `https://youtu.be/${v.videoId}`,
+                    false,
+                    p.segment || 0, p.totalSeg || 1
+                );
             }
         };
 
-        if (virtualPlaylistData?.length) {
-            _addVideos(virtualPlaylistData);
+        // Path A: use virtual playlist data
+        if (vpData?.length) {
+            _ingest(vpData);
+            log('[EpisodeEngine] ingested from VP:', list.length - 1, 'videos');
 
-            // Patch missing segments for current episode
+            // Gap-fill: if multi-segment current ep has missing segs, search them
             if (info.totalSeg && info.totalSeg > 1) {
-                const presentSegs = new Set(list.filter(e => e.episode === ce).map(e => e.segment));
+                const presentSegs = new Set(
+                    list.filter(e => e.episode === info.episode).map(e => e.segment)
+                );
                 const missing = [];
-                for (let seg = 1; seg <= info.totalSeg; seg++) {
-                    if (!presentSegs.has(seg)) missing.push(seg);
+                for (let s = 1; s <= info.totalSeg; s++) {
+                    if (!presentSegs.has(s)) missing.push(s);
                 }
                 if (missing.length) {
-                    log('[EpisodeEngine] patching missing segments:', missing);
-                    const r = await Search.search(Search.mkQuery(`${info.series} tập ${ce}${partStr}`, channel));
-                    _addVideos(r.filter(v => {
-                        const p = parseTitle(v.title);
-                        return p?.series === info.series && p.episode === ce &&
-                            (!info.season || p.season === null || p.season === info.season);
-                    }));
+                    const partStr = info.season ? ` - P${info.season}` : '';
+                    const q = Search.mkQuery(`${info.series} tập ${info.episode}${partStr}`, channel);
+                    _ingest(await Search.search(q));
                 }
             }
         } else {
-            // Fallback: search window around current episode
-            const startEp = Math.max(1, ce - 3);
-            const endEp   = ce + 12;
-            for (let ep = startEp; ep <= endEp; ep++) {
-                if (ep === ce) continue;
-                const queries = [
-                    `${info.series} tập ${ep}${partStr}`,
-                    info.season ? `${info.series} p${info.season} tập ${ep}` : null,
-                ].filter(Boolean);
-                for (const q of queries) {
-                    const results = await Search.search(Search.mkQuery(q, channel));
-                    _addVideos(results.filter(v => {
-                        const p = parseTitle(v.title);
-                        return p?.series === info.series && p.episode === ep &&
-                            (!info.season || p.season === null || p.season === info.season);
-                    }));
-                }
+            // Path B: search-based fallback — window ±5 around current ep
+            const partStr = info.season ? ` - P${info.season}` : '';
+            const lo = Math.max(1, info.episode - 5);
+            const hi = info.episode + 10;
+            const queries = new Set();
+
+            for (let ep = lo; ep <= hi; ep++) {
+                if (ep === info.episode) continue;
+                queries.add(Search.mkQuery(`${info.series} tập ${ep}${partStr}`, channel));
             }
+            // Also a broad query to catch surrounding eps in one shot
+            queries.add(Search.mkQuery(`${info.series} tập${partStr}`, channel));
+
+            const results = await Promise.all([...queries].map(q => Search.search(q)));
+            for (const r of results) _ingest(r);
         }
 
-        // Dedup + sort
-        const seen   = new Set();
-        const unique = [];
-        for (const item of list) {
-            if (!seen.has(item.videoId)) { seen.add(item.videoId); unique.push(item); }
-        }
-        unique.sort((a, b) => a.episode !== b.episode ? a.episode - b.episode : (a.segment || 0) - (b.segment || 0));
-
-        log('[EpisodeEngine] list size:', unique.length);
-        return unique;
+        const sorted = _sortByEpSeg(list);
+        _cacheList(seriesKey, sorted);
+        log('[EpisodeEngine] built list, size:', sorted.length);
+        return sorted;
     }
 
-    // ─── Main orchestration (called by entry.js) ──────────────────────────────
-    /**
-     * Run full episode discovery and emit results onto EventBus.
-     * @param {ParsedInfo} info
-     * @param {string}     channel
-     */
-    async function run(info, channel) {
-        log('[EpisodeEngine] run:', info.series, 'ep', info.episode);
+    // ─── findNext ─────────────────────────────────────────────────────────────
+    async function findNext(info, channel, list) {
+        const partStr = info.season ? ` - P${info.season}` : '';
 
-        // Build virtual playlist (series-scoped, cached)
+        // Case A: next segment of same episode
+        if (info.segment && info.totalSeg && info.segment < info.totalSeg) {
+            const nextSeg = info.segment + 1;
+            // Check list first
+            const fromList = list.find(e =>
+                e.episode === info.episode && e.segment === nextSeg
+            );
+            if (fromList) return { url: fromList.url, title: fromList.title, source: 'cached' };
+            // Search fallback
+            const segQ = `${info.series} tập ${info.episode}${partStr} (${nextSeg}/${info.totalSeg})`;
+            const res  = await Search.search(Search.mkQuery(segQ, channel));
+            const hit  = res.find(v => {
+                const p = parseTitle(v.title);
+                return p.episode === info.episode && p.segment === nextSeg;
+            });
+            if (hit) return { url: `https://youtu.be/${hit.videoId}`, title: hit.title, source: 'segment' };
+            return null;
+        }
+
+        // Case B: next episode from cache
+        const nextEp = info.episode + 1;
+        const fromList = list
+            .filter(e => e.episode === nextEp && _seasonMatch(e, info))
+            .sort((a, b) => (a.segment || 0) - (b.segment || 0));
+        if (fromList.length) {
+            return { url: fromList[0].url, title: fromList[0].title, source: 'cached' };
+        }
+
+        // Case C: search fallback
+        const q   = Search.mkQuery(`${info.series} tập ${nextEp}${partStr}`, channel);
+        let   res = await Search.search(q);
+        let   hits = res.filter(v => {
+            const p = parseTitle(v.title);
+            return p.episode === nextEp && _seriesMatch(p, info) && _seasonMatch(p, info);
+        });
+
+        if (!hits.length && channel) {
+            // Retry without channel name
+            res  = await Search.search(`${info.series} tập ${nextEp}${partStr}`);
+            hits = res.filter(v => {
+                const p = parseTitle(v.title);
+                return p.episode === nextEp && _seriesMatch(p, info) && _seasonMatch(p, info);
+            });
+        }
+
+        if (hits.length) {
+            const chosen = hits.sort((a, b) => (parseTitle(a.title).segment || 0) - (parseTitle(b.title).segment || 0))[0];
+            return { url: `https://youtu.be/${chosen.videoId}`, title: chosen.title, source: 'search' };
+        }
+
+        // Case D: try next season
+        if (info.season) {
+            const ns = info.season + 1;
+            const sq = Search.mkQuery(`${info.series} tập 1 - P${ns}`, channel);
+            const sr = await Search.search(sq);
+            const sv = sr.find(v => {
+                const p = parseTitle(v.title);
+                return p.season === ns && _seriesMatch(p, info);
+            });
+            if (sv) return { url: `https://youtu.be/${sv.videoId}`, title: sv.title, source: 'newseason' };
+        }
+
+        return null;
+    }
+
+    // ─── findPrevious ─────────────────────────────────────────────────────────
+    async function findPrevious(info, channel, list) {
+        const prevEp  = info.episode - 1;
+        if (prevEp < 1) return null;
+        const partStr = info.season ? ` - P${info.season}` : '';
+
+        // From cache: pick the last segment of prev ep
+        const fromList = list
+            .filter(e => e.episode === prevEp && _seasonMatch(e, info))
+            .sort((a, b) => (b.segment || 0) - (a.segment || 0));
+        if (fromList.length) {
+            return { url: fromList[0].url, title: fromList[0].title, episode: prevEp };
+        }
+
+        // Search fallback
+        const q   = Search.mkQuery(`${info.series} tập ${prevEp}${partStr}`, channel);
+        const res = await Search.search(q);
+        const hits = res
+            .filter(v => {
+                const p = parseTitle(v.title);
+                return p.episode === prevEp && _seriesMatch(p, info) && _seasonMatch(p, info);
+            })
+            .sort((a, b) => (parseTitle(b.title).segment || 0) - (parseTitle(a.title).segment || 0));
+
+        if (!hits.length) return null;
+        return { url: `https://youtu.be/${hits[0].videoId}`, title: hits[0].title, episode: prevEp };
+    }
+
+    // ─── Main run ─────────────────────────────────────────────────────────────
+    async function run(info, channel, seriesKey) {
+        log('[EpisodeEngine] run:', info.series, 'S', info.season, 'ep', info.episode);
+
+        // 1. Build virtual playlist
         const vpData = await VirtualPlaylist.build(info.series);
 
-        // Build episode list
-        const list = await findEpisodeList(info, channel, vpData);
+        // 2. Build episode list (series-scoped cache)
+        const list = await _buildList(info, channel, seriesKey, vpData);
         EventBus.emit('playlistReady', { list });
 
-        // Find prev
+        // 3. Find prev first (fast from cache, no UI dependency)
         const prev = await findPrevious(info, channel, list);
         if (prev) EventBus.emit('prevFound', prev);
 
-        // Find next
+        // 4. Find next
         const next = await findNext(info, channel, list);
         if (next) {
             EventBus.emit('nextFound', next);
         } else {
-            // Fallback to YouTube autoplay
             const ap = getYouTubeAutoplay();
             if (ap) EventBus.emit('nextFound', { ...ap, source: 'autoplay' });
             else     EventBus.emit('nextNotFound');
         }
 
-        // Missing episode detection
+        // 5. Missing detection — runs after list is complete
         const missing = detectMissingEpisodes(list);
         if (missing.episodes.length || missing.segments.length) {
             EventBus.emit('missingDetected', missing);
         }
     }
 
-    return { run, findNext, findPrevious, findEpisodeList };
+    /** Invalidate list cache for a series (e.g. user force-refresh) */
+    function invalidateList(seriesKey) { _listCache.delete(seriesKey); }
+
+    return { run, findNext, findPrevious, invalidateList };
 })();

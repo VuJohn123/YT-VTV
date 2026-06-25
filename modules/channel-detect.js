@@ -1,84 +1,89 @@
-// channel-detect.js — Layer 1: Resolve YouTube channel name from DOM / ytInitialPlayerResponse
-// Pure async logic, không ghi bất kỳ global state nào.
+// channel-detect.js — Layer 1: Resolve channel per video navigation
+// Key fix: YouTube SPA không reload page → phải re-resolve channel per navigate,
+// không cache theo URL vì cùng URL có thể render kênh khác sau SPA nav.
 
 const ChannelDetect = (() => {
-    async function _waitForDefined() {
-        await Promise.all([
-            customElements.whenDefined('ytd-channel-name'),
-            customElements.whenDefined('ytd-video-owner-renderer'),
-        ]);
+    // Per-video cache: videoId → channelName (tránh re-resolve cùng video)
+    const _cache = new Map();
+
+    async function _waitForOwner() {
+        await customElements.whenDefined('ytd-video-owner-renderer').catch(() => {});
     }
 
-    function _fromPlayerResponse() {
+    function _fromPlayerResponse(win) {
         try {
-            const p = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window).ytInitialPlayerResponse;
+            const p = win.ytInitialPlayerResponse ?? win.ytplayer?.config?.args?.raw_player_response;
             if (p?.videoDetails?.author) return p.videoDetails.author;
         } catch (e) {}
         return null;
     }
 
-    function _textFromEl(el, sel) {
-        if (!el) return null;
-        if (el.shadowRoot) {
-            const f = el.shadowRoot.querySelector(sel);
-            if (f?.textContent.trim()) return f.textContent.trim();
-        }
-        return el.querySelector(sel)?.textContent.trim() || null;
-    }
-
-    function _textFromLinks(el) {
-        if (!el) return null;
-        const root = el.shadowRoot ?? el;
-        for (const l of root.querySelectorAll('a.yt-simple-endpoint')) {
-            const t = l.textContent.trim();
-            if (t) return t;
-        }
-        return null;
-    }
-
     function _fromDOM() {
-        // ytd-video-owner-renderer
+        // Primary: ytd-video-owner-renderer (most reliable)
         const owner = document.querySelector('ytd-video-owner-renderer');
         if (owner) {
-            for (const sel of ['#owner a.yt-simple-endpoint', '#channel-name a', '#text-container a', 'a.yt-simple-endpoint']) {
-                const t = _textFromEl(owner, sel);
-                if (t) return t;
+            const roots = [owner, owner.shadowRoot].filter(Boolean);
+            for (const root of roots) {
+                for (const sel of [
+                    '#channel-name a', '#owner-name a', '#text-container a',
+                    'a[href^="/@"]', 'a[href^="/channel/"]',
+                ]) {
+                    const el = root.querySelector(sel);
+                    const t  = el?.textContent?.trim();
+                    if (t && t.length > 1) return t;
+                }
             }
-            const t = _textFromLinks(owner);
-            if (t) return t;
         }
-        // ytd-channel-name elements
-        for (const c of document.querySelectorAll('ytd-channel-name')) {
-            for (const sel of ['a.yt-simple-endpoint', '#text a', '#text-container a', 'a']) {
-                const t = _textFromEl(c, sel);
-                if (t) return t;
-            }
-            const t = _textFromLinks(c);
-            if (t) return t;
-        }
-        // Fallback: any channel-href anchor
-        for (const a of document.querySelectorAll('a.yt-simple-endpoint')) {
-            const text = a.textContent.trim();
-            const href = a.getAttribute('href') || '';
-            if (text && text.length > 3 && (href.startsWith('/@') || href.startsWith('/channel/'))) return text;
+        // Secondary: above-the-fold channel name badge
+        for (const sel of [
+            'ytd-channel-name yt-formatted-string a',
+            '#upload-info a',
+            'span#owner-name a',
+        ]) {
+            const el = document.querySelector(sel);
+            const t  = el?.textContent?.trim();
+            if (t && t.length > 1) return t;
         }
         return null;
     }
 
     /**
-     * Wait up to ~16 seconds for the channel name to appear.
-     * @returns {Promise<string>} — empty string if not found
+     * Resolve channel name for the current video.
+     * Must be called after each yt-navigate-finish, not cached across navigations.
+     * @param {string} videoId — current video ID (used for per-video dedup only)
+     * @returns {Promise<string>}
      */
-    async function resolve() {
-        await _waitForDefined();
-        await new Promise(r => setTimeout(r, 500));
-        for (let i = 0; i < 40; i++) {
-            const name = _fromPlayerResponse() || _fromDOM();
-            if (name) return name;
-            await new Promise(r => setTimeout(r, 400));
+    async function resolve(videoId) {
+        // Per-video cache hit (same video re-queried in same page session)
+        if (videoId && _cache.has(videoId)) return _cache.get(videoId);
+
+        const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window);
+
+        await _waitForOwner();
+
+        // Try playerResponse first (available immediately after nav)
+        const fast = _fromPlayerResponse(win);
+        if (fast) {
+            if (videoId) _cache.set(videoId, fast);
+            return fast;
+        }
+
+        // Poll DOM — YouTube renders owner async after SPA nav
+        for (let i = 0; i < 50; i++) {
+            // Re-check playerResponse each tick (it populates async)
+            const pr = _fromPlayerResponse(win);
+            if (pr) { if (videoId) _cache.set(videoId, pr); return pr; }
+
+            const dom = _fromDOM();
+            if (dom) { if (videoId) _cache.set(videoId, dom); return dom; }
+
+            await new Promise(r => setTimeout(r, 300));
         }
         return '';
     }
 
-    return { resolve };
+    /** Clear cache on full page reload (called by entry.js on beforeunload) */
+    function clearCache() { _cache.clear(); }
+
+    return { resolve, clearCache };
 })();
