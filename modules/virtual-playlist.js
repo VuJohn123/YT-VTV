@@ -2,6 +2,10 @@
 // Cache được scoped theo series name và stored qua Storage module.
 
 const VirtualPlaylist = (() => {
+    // Giới hạn số playlist xử lý mỗi lần build, để tránh fetch tràn lan
+    // khi search trả về nhiều playlist không liên quan (false positive).
+    const MAX_PLAYLISTS_PER_SERIES = 5;
+
     // ─── In-memory cache (L1), Storage is L2 ─────────────────────────────────
     /** @type {Map<string, {data: Array, timestamp: number}>} */
     const _memCache = new Map();
@@ -136,8 +140,16 @@ const VirtualPlaylist = (() => {
         }
 
         log('[VirtualPlaylist] building:', seriesName);
-        const playlists = await _fetchPlaylistsForSeries(seriesName);
-        playlists.sort((a, b) => b.videoCount - a.videoCount);
+        const rawPlaylists = await _fetchPlaylistsForSeries(seriesName);
+
+        // Lọc playlist rác: bỏ playlist quá nhỏ và tên không liên quan tới series
+        const nameHint = seriesName.toLowerCase().trim();
+        const playlists = rawPlaylists
+            .filter(pl => pl.videoCount >= 2 && pl.title && pl.title.toLowerCase().includes(nameHint.split(' ')[0]))
+            .sort((a, b) => b.videoCount - a.videoCount)
+            .slice(0, MAX_PLAYLISTS_PER_SERIES);
+
+        log(`[VirtualPlaylist] ${rawPlaylists.length} playlist tìm thấy, dùng ${playlists.length} sau lọc`);
 
         let allVideos = [];
         for (const pl of playlists) {

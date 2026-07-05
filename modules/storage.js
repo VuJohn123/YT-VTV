@@ -137,8 +137,11 @@ const Storage = (() => {
 
     // ─── Community notes ──────────────────────────────────────────────────────
     function getNotes(epKey) {
-        try { return JSON.parse(GM_getValue('vtvUlt_communityNotes', '{}')); }
-        catch (e) { return {}; }
+        let all;
+        try { all = JSON.parse(GM_getValue('vtvUlt_communityNotes', '{}')); }
+        catch (e) { all = {}; }
+        if (epKey === undefined) return all;
+        return all[epKey] || [];
     }
 
     function addNote(epKey, text) {

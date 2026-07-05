@@ -8,8 +8,8 @@
 (function () {
     'use strict';
 
-    let _running = false;
-    let _lastVid = null;
+    let _runToken = 0; // tăng dần mỗi lần _runMain được gọi; dùng để huỷ run cũ
+    let _lastVid  = null;
 
     window._vtvParsedInfo = null;
 
@@ -78,9 +78,13 @@
     EventBus.on('error',        ({ context, err }) => warn('[Entry] error in', context, err));
 
     // ─── Main per-navigation ──────────────────────────────────────────────────
+    // Dùng run-token thay vì boolean guard: nếu navigation mới xảy ra trong lúc
+    // run trước còn đang await (channel resolve, search, v.v.), run cũ tự huỷ
+    // ở checkpoint gần nhất thay vì bị bỏ qua hoàn toàn (bug cũ: _running=true
+    // khiến navigation B bị nuốt mất nếu nó tới trong lúc _runMain(A) đang await).
     async function _runMain() {
-        if (_running) return;
-        _running = true;
+        const myToken = ++_runToken;
+        const _stale  = () => myToken !== _runToken;
 
         window._vtvParsedInfo = null;
         window._vtvSeriesKey  = null;
@@ -94,6 +98,7 @@
             // 1. Resolve channel — pass videoId for per-video dedup
             const videoId     = new URLSearchParams(location.search).get('v') || '';
             const channelName = await ChannelDetect.resolve(videoId);
+            if (_stale()) return; // navigation mới đã xảy ra trong lúc await
             EventBus.emit('channelReady', { channelName });
 
             if (!isVTVChannel(channelName)) {
@@ -146,14 +151,14 @@
             // 7. Attach video context
             VideoContext.attach(seriesKey, { autoPlay: flags.autoPlay, autoSkip: flags.autoSkip });
 
-            // 8. Episode discovery
+            // 8. Episode discovery (nhiều await bên trong — check lại sau khi xong)
             await EpisodeEngine.run(info, channelName, seriesKey);
+            if (_stale()) return;
 
         } catch (err) {
+            if (_stale()) return; // lỗi từ 1 run đã bị huỷ, không cần báo
             warn('[Entry] uncaught:', err);
             EventBus.emit('error', { context: 'main', err });
-        } finally {
-            _running = false;
         }
     }
 

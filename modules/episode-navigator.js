@@ -117,7 +117,9 @@ const EpisodeEngine = (() => {
                 }
             }
         } else {
-            // Path B: search-based fallback — window ±5 around current ep
+            // Path B: search-based fallback — window [-5, +10] quanh tập hiện tại.
+            // Cố ý bất đối xứng: ưu tiên tìm các tập PHÍA SAU (marathon/auto-next
+            // cần next nhiều hơn prev), lùi chỉ cần đủ để out-of-order guard hoạt động.
             const partStr = info.season ? ` - P${info.season}` : '';
             const lo = Math.max(1, info.episode - 5);
             const hi = info.episode + 10;

@@ -83,8 +83,9 @@ const VideoContext = (() => {
         if (_lastTime >= 0 && Math.abs(cur - _lastTime) > 5 && _seriesKey) {
             Storage.learnSkip(_seriesKey, _lastTime, cur, _videoEl.duration);
         }
+        const from = _lastTime;
         _lastTime = cur;
-        EventBus.emit('seeked', { from: _lastTime, to: cur });
+        EventBus.emit('seeked', { from, to: cur });
 
         // User scrubbed near end → start countdown
         if (!_autoPlay || !_nextUrl || _redirectScheduled || _adDetected) return;
