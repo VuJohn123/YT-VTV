@@ -519,7 +519,7 @@ const UI = (() => {
         _setTitle('Gợi ý YouTube');
         _setStatus('Không có tập tiếp theo trong danh sách VTV.');
         _showNextCard(apTitle, true);
-        _setActions({ label: '⏭ Xem ngay', cls: 'vtv-btn-primary', onClick: () => { if (apUrl) location.href = apUrl; } });
+        _setActions({ label: '⏭ Xem ngay', cls: 'vtv-btn-primary', onClick: () => { if (apUrl) Navigator.goTo(apUrl); } });
     }
 
     function showOutOfOrder(current, expected, expectedUrl) {
@@ -527,7 +527,7 @@ const UI = (() => {
         _setStatus(`Bạn đang xem tập <b>${current}</b>. Tiến trình đang ở tập <b>${expected}</b>.`);
         _showNextCard('', false);
         _setActions(
-            { label: `Đến tập ${expected}`, cls: 'vtv-btn-primary', onClick: () => { if (expectedUrl) location.href = expectedUrl; } },
+            { label: `Đến tập ${expected}`, cls: 'vtv-btn-primary', onClick: () => { if (expectedUrl) Navigator.goTo(expectedUrl); } },
             { label: 'Bỏ qua',              cls: 'vtv-btn-ghost',   onClick: () => EventBus.emit('outOfOrderIgnored') }
         );
     }
@@ -540,8 +540,8 @@ const UI = (() => {
         _prevEp  = prev;
 
         const btns = [];
-        if (url)  btns.push({ label: '⏭ Tiếp theo', cls: 'vtv-btn-primary', onClick: () => location.href = url });
-        if (prev?.url) btns.push({ label: '◀ Quay lại', cls: 'vtv-btn-danger', onClick: () => location.href = prev.url });
+        if (url)  btns.push({ label: '⏭ Tiếp theo', cls: 'vtv-btn-primary', onClick: () => Navigator.goTo(url) });
+        if (prev?.url) btns.push({ label: '◀ Quay lại', cls: 'vtv-btn-danger', onClick: () => Navigator.goTo(prev.url) });
         _setActions(...btns);
 
         _renderList();
@@ -553,7 +553,7 @@ const UI = (() => {
         _showNextCard('', false);
 
         const btns = [];
-        if (prev?.url) btns.push({ label: '◀ Quay lại', cls: 'vtv-btn-danger', onClick: () => location.href = prev.url });
+        if (prev?.url) btns.push({ label: '◀ Quay lại', cls: 'vtv-btn-danger', onClick: () => Navigator.goTo(prev.url) });
         _setActions(...btns);
         _renderList();
     }

@@ -4,6 +4,10 @@
 //   2. Missing episode detection chạy sau khi list đã đầy đủ
 //   3. findNext/findPrev ưu tiên list cache, fallback search với fuzzy match
 //   4. Không re-search nếu đã có hit trong cache
+//   5. Dedup video trùng tập (nhiều bản upload style title khác nhau cho cùng
+//      1 tập thật) — giữ bản đăng MỚI NHẤT theo publishedTimeText, so khớp
+//      season kiểu fuzzy (null = wildcard) để không tách nhầm 1 tập thật
+//      thành 2 tập ảo chỉ vì cách ghi "phần mấy" khác nhau giữa các title.
 
 const EpisodeEngine = (() => {
     // ─── Per-series episode list cache (in-memory, session) ───────────────────
@@ -64,12 +68,57 @@ const EpisodeEngine = (() => {
         }
 
         const list = [];
-        const seen = new Set();
+        const seen = new Set();              // dedup theo videoId (video giống hệt, tránh add 2 lần)
+        const byEpSegGroup = new Map();       // "episode|segment" → mảng index trong `list` (nhóm ứng viên cùng tập)
 
-        const _add = (videoId, episode, season, title, url, isCurrent = false, segment = 0, totalSeg = 1) => {
+        // So khớp season kiểu fuzzy, cùng tinh thần với _seasonMatch: nếu 1 trong 2
+        // bên không ghi season (null), coi là có thể cùng 1 tập thật (style title cũ
+        // không luôn ghi rõ "phần mấy"). Chỉ coi là KHÁC tập khi cả 2 đều có season
+        // xác định và khác nhau.
+        const _seasonCompatible = (a, b) => (a == null || b == null || a === b);
+
+        const _add = (videoId, episode, season, title, url, isCurrent = false, segment = 0, totalSeg = 1, meta = {}) => {
             if (!videoId || seen.has(videoId)) return;
-            seen.add(videoId);
-            list.push({ videoId, episode, season, title, url, isCurrent, segment, totalSeg });
+
+            const entry = {
+                videoId, episode, season, title, url, isCurrent, segment, totalSeg,
+                publishedText: meta.publishedText || '',
+                _seq: typeof meta._seq === 'number' ? meta._seq : undefined,
+            };
+
+            const groupKey = `${episode}|${segment}`;
+            const candidateIdxs = byEpSegGroup.get(groupKey) || [];
+
+            // Tìm ứng viên trùng thật trong nhóm (season fuzzy-match)
+            const dupIdx = candidateIdxs.find(idx => _seasonCompatible(list[idx].season, season));
+
+            if (dupIdx === undefined) {
+                seen.add(videoId);
+                byEpSegGroup.set(groupKey, [...candidateIdxs, list.length]);
+                list.push(entry);
+                return;
+            }
+
+            // Đã có 1 video khác cho đúng tập/segment này (trường hợp nhiều bản
+            // upload trùng tập — ví dụ style title cũ với description khác nhau).
+            // Giữ lại bản MỚI hơn theo thời gian đăng (hoặc thứ tự playlist nếu
+            // không có date). Video hiện tại (isCurrent) luôn được ưu tiên giữ vì
+            // đó là video user đang xem thật.
+            const existing = list[dupIdx];
+            if (existing.isCurrent) return; // không thay thế video đang xem
+
+            const cmp = compareVideoRecency(entry, existing);
+            if (cmp > 0) {
+                // entry mới hơn existing → thay thế, và merge season nếu entry
+                // có season xác định còn existing thì null (giữ thông tin chi tiết hơn)
+                seen.delete(existing.videoId);
+                seen.add(videoId);
+                if (entry.season == null && existing.season != null) entry.season = existing.season;
+                list[dupIdx] = entry;
+                log('[EpisodeEngine] dup', groupKey, '→ giữ bản mới hơn:', title);
+            } else {
+                log('[EpisodeEngine] dup', groupKey, '→ bỏ qua bản cũ hơn:', title);
+            }
         };
 
         // Seed: current video
@@ -91,7 +140,8 @@ const EpisodeEngine = (() => {
                     v.title,
                     v.url || `https://youtu.be/${v.videoId}`,
                     false,
-                    p.segment || 0, p.totalSeg || 1
+                    p.segment || 0, p.totalSeg || 1,
+                    { publishedText: v.publishedText, _seq: v._seq }
                 );
             }
         };

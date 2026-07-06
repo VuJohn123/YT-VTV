@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
-// @version      9.0
-// @description  Tự động điều hướng tập phim VTV Giải Trí — kiến trúc layered event-driven
+// @version      10.0
+// @description  Tự động điều hướng tập phim VTV Giải Trí — kiến trúc layered event-driven, SPA-native navigation
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -17,6 +17,7 @@
 // Layer 0/1 — pure utilities, no dependencies
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/utils.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/event-bus.js
+// @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/navigator.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/storage.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/search.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/channel-detect.js

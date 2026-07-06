@@ -421,12 +421,12 @@ const VoiceControl = (() => {
 
         // ── 1. NAVIGATION ────────────────────────────────────────────────
         if (/\b(tiếp theo|tập sau|tập kế|xem tiếp|chuyển tiếp|next)\b/.test(t)) {
-            if (_nextUrl) { _notify('Chuyển tập tiếp theo'); window.location.href = _nextUrl; }
+            if (_nextUrl) { _notify('Chuyển tập tiếp theo'); Navigator.goTo(_nextUrl); }
             else _notify('Không tìm thấy tập tiếp theo');
             return;
         }
         if (/\b(quay lại|tập trước|back|trước đó|quay về)\b/.test(t)) {
-            if (_prevUrl) { _notify('Quay lại tập trước'); window.location.href = _prevUrl; }
+            if (_prevUrl) { _notify('Quay lại tập trước'); Navigator.goTo(_prevUrl); }
             else _notify('Không có tập trước');
             return;
         }
@@ -711,8 +711,8 @@ const Keyboard = (() => {
         document.addEventListener('keydown', (e) => {
             if (['INPUT', 'TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable) return;
             switch (e.key) {
-                case 'n': case 'N': if (_nextUrl) window.location.href = _nextUrl; break;
-                case 'b': case 'B': if (_prevUrl) window.location.href = _prevUrl; break;
+                case 'n': case 'N': if (_nextUrl) Navigator.goTo(_nextUrl); break;
+                case 'b': case 'B': if (_prevUrl) Navigator.goTo(_prevUrl); break;
                 case 'm': case 'M': EventBus.emit('modeChange', { key: 'marathon', value: !Storage.getFeatureFlags().marathon }); break;
                 case 'g': case 'G': _recordGIF(); break;
                 case 'f': case 'F': _findFull(); break;
@@ -746,7 +746,7 @@ const Keyboard = (() => {
             return p?.episode === info.episode && p.series === info.series && v.title.toLowerCase().includes('full');
         });
         if (full.length && confirm(`Tìm thấy bản Full: ${full[0].title}. Chuyển sang?`)) {
-            window.location.href = `https://youtu.be/${full[0].videoId}`;
+            Navigator.goTo(`https://youtu.be/${full[0].videoId}`);
         }
     }
 

@@ -36,7 +36,7 @@ const VideoContext = (() => {
             EventBus.emit('countdownTick', { remaining: rem, total: _cdTotal });
             if (rem <= 0) {
                 clearInterval(_cdInterval); _cdInterval = null;
-                if (_nextUrl && !_adDetected) window.location.href = _nextUrl;
+                if (_nextUrl && !_adDetected) Navigator.goTo(_nextUrl);
             }
         }, 1000);
     }
@@ -73,7 +73,7 @@ const VideoContext = (() => {
         EventBus.emit('videoEnded');
         if (_autoPlay && _nextUrl && !_adDetected) {
             _cancelRedirect();
-            window.location.href = _nextUrl;
+            Navigator.goTo(_nextUrl);
         }
     }
 

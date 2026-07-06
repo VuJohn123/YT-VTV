@@ -61,7 +61,7 @@ const VirtualPlaylist = (() => {
                 if (items) {
                     for (const item of items) {
                         const vr = item?.playlistVideoRenderer;
-                        if (vr?.videoId) videos.push({ title: vr.title?.runs?.[0]?.text || '', videoId: vr.videoId });
+                        if (vr?.videoId) videos.push({ title: vr.title?.runs?.[0]?.text || '', videoId: vr.videoId, _seq: videos.length });
                     }
                 }
             }
@@ -75,7 +75,7 @@ const VirtualPlaylist = (() => {
             for (const action of data?.onResponseReceivedActions ?? []) {
                 for (const item of action?.appendContinuationItemsAction?.continuationItems ?? []) {
                     const vr = item?.playlistVideoRenderer;
-                    if (vr?.videoId) videos.push({ title: vr.title?.runs?.[0]?.text || '', videoId: vr.videoId });
+                    if (vr?.videoId) videos.push({ title: vr.title?.runs?.[0]?.text || '', videoId: vr.videoId, _seq: videos.length });
                 }
                 cont = action?.appendContinuationItemsAction?.continuation ?? cont;
             }
