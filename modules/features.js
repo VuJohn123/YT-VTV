@@ -47,7 +47,7 @@ const AdBlock = (() => {
                 const v = VideoContext.getVideoEl();
                 if (v?.duration > 0 && v.duration < AD_MAX_DURATION) {
                     EventBus.emit('adDetected', { detected: true });
-                    v.currentTime = v.duration - 0.1;
+                    PlayerControl.seekTo(v.duration - 0.1);
                 } else {
                     EventBus.emit('adDetected', { detected: false });
                 }
@@ -392,9 +392,13 @@ const VoiceControl = (() => {
         const dur = v?.duration ?? 0;
 
         // ── Helpers ──────────────────────────────────────────────────────
-        const _seek   = (s) => { if (v) v.currentTime = Math.max(0, Math.min(dur, s)); };
-        const _vol    = (n) => { if (v) v.volume = Math.max(0, Math.min(1, n)); };
-        const _rate   = (r) => { if (v) v.playbackRate = Math.max(0.25, Math.min(3, r)); };
+        // Dùng PlayerControl (internal function layer dùng chung) thay vì tự
+        // thao tác trực tiếp lên <video> — đảm bảo clamp/snap nhất quán với
+        // Keyboard shortcuts và UI panel, và tự đồng bộ UI Settings menu của
+        // YouTube khi có thể (xem player-control.js).
+        const _seek   = (s) => PlayerControl.seekTo(s);
+        const _vol    = (n) => PlayerControl.setVolume(n);
+        const _rate   = (r) => PlayerControl.setRate(r);
         const _notify = (msg) => EventBus.emit('voiceLabel', { text: '✓ ' + msg });
 
         // Parse time expression: "5 phút 30 giây" / "5:30" / "phút 5" / "30 giây" / "5p30"
@@ -448,31 +452,31 @@ const VoiceControl = (() => {
         // ── 3. SEEK — relative forward ────────────────────────────────────
         if (/\b(tua nhanh|tua thêm|bỏ qua|skip|tiến lên|nhảy qua)\b/.test(t)) {
             const a = _parseAmount(t, 30);
-            _seek(v.currentTime + a); _notify(`+${a}s`); return;
+            PlayerControl.seekBy(a); _notify(`+${a}s`); return;
         }
         // Short: "5 giây" / "1 phút" without explicit direction → treat as forward
         if (/^(\d+\s*(giây|phút))$/.test(t)) {
             const a = _parseAmount(t, 10);
-            _seek(v.currentTime + a); _notify(`+${a}s`); return;
+            PlayerControl.seekBy(a); _notify(`+${a}s`); return;
         }
 
         // ── 4. SEEK — relative backward ───────────────────────────────────
         if (/\b(tua lại|lùi lại|lùi về|xem lại|rewind|quay lại \d)\b/.test(t)) {
             const a = _parseAmount(t, 10);
-            _seek(v.currentTime - a); _notify(`−${a}s`); return;
+            PlayerControl.seekBy(-a); _notify(`−${a}s`); return;
         }
 
         // ── 5. PLAY / PAUSE ───────────────────────────────────────────────
-        if (/\b(dừng|tạm dừng|pause|ngừng|đứng lại)\b/.test(t))   { v?.pause(); _notify('Dừng'); return; }
-        if (/\b(phát|play|tiếp tục|chạy|chơi|bắt đầu)\b/.test(t)) { v?.play();  _notify('Phát'); return; }
+        if (/\b(dừng|tạm dừng|pause|ngừng|đứng lại)\b/.test(t))   { PlayerControl.pause(); _notify('Dừng'); return; }
+        if (/\b(phát|play|tiếp tục|chạy|chơi|bắt đầu)\b/.test(t)) { PlayerControl.play();  _notify('Phát'); return; }
         // Toggle
         if (/\b(toggle|bật tắt phát)\b/.test(t)) {
-            v?.paused ? v.play() : v?.pause(); _notify('Toggle'); return;
+            PlayerControl.togglePlay(); _notify('Toggle'); return;
         }
 
         // ── 6. VOLUME ─────────────────────────────────────────────────────
-        if (/\b(tắt tiếng|im lặng|mute)\b/.test(t))                { _vol(0); _notify('Tắt tiếng'); return; }
-        if (/\b(bật tiếng|unmute|bỏ tắt tiếng)\b/.test(t))         { v && (v.muted = false); _vol(v?.volume ?? 0.8); _notify('Bật tiếng'); return; }
+        if (/\b(tắt tiếng|im lặng|mute)\b/.test(t))                { PlayerControl.mute(); _notify('Tắt tiếng'); return; }
+        if (/\b(bật tiếng|unmute|bỏ tắt tiếng)\b/.test(t))         { PlayerControl.unmute(); _vol(PlayerControl.getVolume() || 0.8); _notify('Bật tiếng'); return; }
         if (/\b(tăng âm|to hơn|lớn hơn)\b/.test(t)) {
             const step = _parseAmount(t, 10) / 100;
             _vol((v?.volume ?? 0.5) + step); _notify(`Âm lượng +${Math.round(step*100)}%`); return;
@@ -495,11 +499,12 @@ const VoiceControl = (() => {
         // ── 7. PLAYBACK SPEED ─────────────────────────────────────────────
         if (/\b(bình thường|tốc độ bình thường|1x|normal speed)\b/.test(t)) { _rate(1);    _notify('1x'); return; }
         if (/\b(nhanh hơn|tăng tốc)\b/.test(t)) {
-            const step = t.match(/(\d+(?:\.\d+)?)\s*x/) ? +t.match(/(\d+(?:\.\d+)?)\s*x/)[1] : (v?.playbackRate ?? 1) + 0.25;
+            const m = t.match(/(\d+(?:\.\d+)?)\s*x/);
+            const step = m ? +m[1] : PlayerControl.getRate() + 0.25;
             _rate(step); _notify(step + 'x'); return;
         }
         if (/\b(chậm hơn|giảm tốc)\b/.test(t)) {
-            const cur = v?.playbackRate ?? 1;
+            const cur = PlayerControl.getRate();
             _rate(cur - 0.25); _notify((cur - 0.25).toFixed(2) + 'x'); return;
         }
         // Exact: "tốc độ 1.5" / "1.5x" / "hai lần"
@@ -516,12 +521,10 @@ const VoiceControl = (() => {
 
         // ── 8. FULLSCREEN ─────────────────────────────────────────────────
         if (/\b(toàn màn hình|fullscreen|phóng to màn hình)\b/.test(t)) {
-            if (!document.fullscreenElement) document.querySelector('#movie_player')?.requestFullscreen?.().catch(()=>{});
-            else document.exitFullscreen?.();
-            _notify('Toàn màn hình'); return;
+            PlayerControl.toggleFullscreen(); _notify('Toàn màn hình'); return;
         }
         if (/\b(thoát toàn màn|thu nhỏ màn|exit fullscreen)\b/.test(t)) {
-            document.exitFullscreen?.(); _notify('Thoát toàn màn'); return;
+            PlayerControl.exitFullscreen(); _notify('Thoát toàn màn'); return;
         }
 
         // ── 9. SUBTITLE / CAPTION ─────────────────────────────────────────
@@ -530,20 +533,23 @@ const VoiceControl = (() => {
         }
 
         // ── 10. QUALITY ───────────────────────────────────────────────────
-        if (/\b(chất lượng cao|hd|1080|720)\b/.test(t)) {
-            const mp = document.getElementById('movie_player');
-            if (mp?.setPlaybackQualityRange) { mp.setPlaybackQualityRange('hd1080','hd1080'); _notify('1080p'); }
-            return;
+        // Sửa bug cũ: "720" và "1080" trước đây bị gộp chung 1 nhánh, luôn set
+        // 1080p bất kể user nói số nào. Giờ tách riêng để set đúng resolution.
+        if (/\b(1080p?|full ?hd)\b/.test(t)) {
+            const ok = PlayerControl.setQuality(1080); _notify(ok ? '1080p' : 'Không đổi được chất lượng'); return;
         }
-        if (/\b(chất lượng thấp|tiết kiệm data|144|240|360)\b/.test(t)) {
-            const mp = document.getElementById('movie_player');
-            if (mp?.setPlaybackQualityRange) { mp.setPlaybackQualityRange('small','small'); _notify('360p'); }
-            return;
+        if (/\b(720p?|(?<!full ?)hd)\b/.test(t)) {
+            const ok = PlayerControl.setQuality(720); _notify(ok ? '720p' : 'Không đổi được chất lượng'); return;
+        }
+        if (/\b(chất lượng thấp|tiết kiệm data|360p?)\b/.test(t)) {
+            const ok = PlayerControl.setQuality(360); _notify(ok ? '360p' : 'Không đổi được chất lượng'); return;
+        }
+        if (/\b(144p?|240p?)\b/.test(t)) {
+            const m = t.match(/144|240/);
+            const ok = PlayerControl.setQuality(+m[0]); _notify(ok ? m[0] + 'p' : 'Không đổi được chất lượng'); return;
         }
         if (/\b(tự động|auto quality|chất lượng tự động)\b/.test(t)) {
-            const mp = document.getElementById('movie_player');
-            if (mp?.setPlaybackQuality) { mp.setPlaybackQuality('auto'); _notify('Auto'); }
-            return;
+            const ok = PlayerControl.setQuality('auto'); _notify(ok ? 'Auto' : 'Không đổi được chất lượng'); return;
         }
 
         // ── 11. THEATER / MINI PLAYER ─────────────────────────────────────
@@ -556,12 +562,17 @@ const VoiceControl = (() => {
 
         // ── 12. PiP ───────────────────────────────────────────────────────
         if (/\b(pip|picture in picture|màn hình nổi|nổi)\b/.test(t)) {
-            if (!document.pictureInPictureElement) v?.requestPictureInPicture?.().catch(()=>{});
-            else document.exitPictureInPicture?.();
-            _notify('PiP'); return;
+            PlayerControl.togglePiP(); _notify('PiP'); return;
         }
 
         // ── 13. MODE TOGGLES ──────────────────────────────────────────────
+        if (/\b(bỏ qua quảng cáo tài trợ|sponsor block|sponsorblock|skip sponsor)\b/.test(t)) {
+            const nv = !Storage.getFeatureFlags().sponsorBlock;
+            Storage.saveFlag('sponsorBlock', nv);
+            const vid = new URLSearchParams(location.search).get('v');
+            nv ? SponsorBlock.enable(vid) : SponsorBlock.disable();
+            _notify('SponsorBlock ' + (nv ? 'ON' : 'OFF')); return;
+        }
         if (/\b(marathon|xem liên tục)\b/.test(t)) {
             const nv = !Storage.getFeatureFlags().marathon;
             EventBus.emit('modeChange', { key: 'marathon', value: nv });
@@ -636,10 +647,10 @@ const VoiceControl = (() => {
             _notify(`Còn ${m}p${s}s`); return;
         }
         if (/\b(tốc độ hiện tại|đang chạy bao nhanh)\b/.test(t)) {
-            _notify(`${v?.playbackRate ?? 1}x`); return;
+            _notify(`${PlayerControl.getRate()}x`); return;
         }
         if (/\b(âm lượng hiện tại|volume mấy)\b/.test(t)) {
-            _notify(`${Math.round((v?.volume ?? 1)*100)}%`); return;
+            _notify(`${Math.round(PlayerControl.getVolume()*100)}%`); return;
         }
 
         // ── 19. SCROLL PAGE ───────────────────────────────────────────────
@@ -710,15 +721,58 @@ const Keyboard = (() => {
     function setup() {
         document.addEventListener('keydown', (e) => {
             if (['INPUT', 'TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable) return;
+
+            // Marathon toggle: dùng Shift+M thay vì M trơn, vì M là phím mute
+            // NATIVE của YouTube — dùng M trơn sẽ khiến cả 2 handler chạy cùng
+            // lúc (vừa mute vừa toggle marathon), rất khó hiểu cho user.
+            if (e.shiftKey && (e.key === 'm' || e.key === 'M')) {
+                EventBus.emit('modeChange', { key: 'marathon', value: !Storage.getFeatureFlags().marathon });
+                return;
+            }
+
+            // Quality cycle: Shift+Q — KHÔNG trùng phím native nào của YouTube
+            // (YouTube không có shortcut đổi resolution mặc định), an toàn để thêm.
+            if (e.shiftKey && (e.key === 'q' || e.key === 'Q')) {
+                _cycleQuality();
+                return;
+            }
+
             switch (e.key) {
                 case 'n': case 'N': if (_nextUrl) Navigator.goTo(_nextUrl); break;
                 case 'b': case 'B': if (_prevUrl) Navigator.goTo(_prevUrl); break;
-                case 'm': case 'M': EventBus.emit('modeChange', { key: 'marathon', value: !Storage.getFeatureFlags().marathon }); break;
                 case 'g': case 'G': _recordGIF(); break;
-                case 'f': case 'F': _findFull(); break;
                 case 's': case 'S': Storage.addToWatchLater(location.href, document.title); break;
             }
+            // "Tìm bản Full": Shift+F thay vì F trơn — F trơn là fullscreen
+            // NATIVE của YouTube, dùng trùng sẽ mở dialog "tìm bản Full" mỗi
+            // lần user chỉ muốn bật fullscreen bình thường.
+            if (e.shiftKey && (e.key === 'f' || e.key === 'F')) _findFull();
         });
+    }
+
+    // Cycle qua các mốc quality phổ biến (auto → 1080 → 720 → 360 → auto...).
+    // Dùng PlayerControl.getAvailableQualities() để chỉ cycle qua resolution
+    // THẬT SỰ có sẵn cho video này (một số video không có 1080p), tránh set
+    // vô ích vào resolution không tồn tại.
+    const _QUALITY_CYCLE = ['auto', 'hd1080', 'hd720', 'medium'];
+    let _qualityCycleIdx = 0;
+    function _cycleQuality() {
+        const available = PlayerControl.getAvailableQualities();
+        // Giới hạn số lần thử = độ dài cycle, tránh vòng lặp vô hạn nếu mọi
+        // resolution trong cycle đều không có sẵn cho video này (ví dụ API
+        // getAvailableQualities() trả về rỗng do lỗi/version khác).
+        for (let i = 0; i < _QUALITY_CYCLE.length; i++) {
+            _qualityCycleIdx = (_qualityCycleIdx + 1) % _QUALITY_CYCLE.length;
+            const target = _QUALITY_CYCLE[_qualityCycleIdx];
+            if (available.length && target !== 'auto' && !available.includes(target)) continue; // thử mốc kế
+            const ok = PlayerControl.setQuality(target);
+            EventBus.emit('voiceLabel', { text: ok ? `Chất lượng: ${target}` : 'Không đổi được chất lượng' });
+            return;
+        }
+        // Không mốc nào hợp lệ (available rỗng hoặc lỗi) — vẫn thử set mốc hiện tại,
+        // để không im lặng hoàn toàn khi user bấm phím.
+        const ok = PlayerControl.setQuality(_QUALITY_CYCLE[_qualityCycleIdx]);
+        EventBus.emit('voiceLabel', { text: ok ? 'Đã đổi chất lượng' : 'Không đổi được chất lượng' });
     }
 
     async function _recordGIF() {

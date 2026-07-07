@@ -400,6 +400,9 @@ const UI = (() => {
         { id: 'tog-voice',    flag: 'voiceEnabled', gm: 'voice',     icon: '🎤', label: 'Voice'     },
         { id: 'tog-audio',    flag: 'audioMode',    gm: 'audioMode', icon: '🔇', label: 'Audio'     },
         { id: 'tog-pip',      flag: 'pipEnabled',   gm: 'pip',       icon: '🖼',  label: 'PiP'       },
+        { id: 'tog-sb',       flag: 'sponsorBlock', gm: 'sponsorBlock', icon: '🚫', label: 'Skip Sponsor' },
+        { id: 'tog-wp',       flag: 'watchParty',   gm: 'watchParty', icon: '🔗', label: 'Watch Party' },
+        { id: 'tog-chap',     flag: 'chapterDetect', gm: 'chapterDetect', icon: '📑', label: 'Chapters' },
     ];
 
     function _renderToggles() {
@@ -423,6 +426,12 @@ const UI = (() => {
                 if (def.flag === 'voiceEnabled') EventBus.emit(val ? 'voiceStart'       : 'voiceStop');
                 if (def.flag === 'audioMode')    EventBus.emit(val ? 'audioModeEnable'  : 'audioModeDisable');
                 if (def.flag === 'pipEnabled')   EventBus.emit(val ? 'pipEnable'        : 'pipDisable');
+                if (def.flag === 'sponsorBlock') {
+                    const vid = new URLSearchParams(location.search).get('v');
+                    val ? SponsorBlock.enable(vid) : SponsorBlock.disable();
+                }
+                if (def.flag === 'watchParty') val ? WatchParty.enable() : WatchParty.disable();
+                if (def.flag === 'chapterDetect') val ? ChapterDetector.enable() : ChapterDetector.disable();
             });
             grid.appendChild(tog);
         }
@@ -572,6 +581,30 @@ const UI = (() => {
         }
     }
 
+    /**
+     * Banner hỏi "xem tiếp tập dở" — dùng chung #vtv-warnings container, KHÔNG
+     * đè lên panel chính (khác showOutOfOrder/showFound vốn thay toàn bộ nội
+     * dung), vì đây chỉ là gợi ý phụ trong lúc tập hiện tại vẫn đang xử lý
+     * bình thường song song.
+     */
+    function showContinuePrompt(lastPos) {
+        const el = document.getElementById('vtv-warnings');
+        if (!el) return;
+        const pct = lastPos.duration > 0 ? Math.round(lastPos.currentTime / lastPos.duration * 100) : 0;
+        const mins = Math.floor(lastPos.currentTime / 60);
+        const secs = Math.floor(lastPos.currentTime % 60).toString().padStart(2, '0');
+        el.innerHTML = `<div class="vtv-warn vtv-fadein" id="vtv-continue-prompt">
+            📌 Bạn đang xem dở tập <b>${lastPos.episode}</b> (${mins}:${secs}, ${pct}%).
+            <button id="vtv-continue-btn" class="vtv-btn-mini">Xem tiếp</button>
+            <button id="vtv-continue-dismiss" class="vtv-btn-mini vtv-btn-mini-ghost">Bỏ qua</button>
+        </div>`;
+        document.getElementById('vtv-continue-btn')?.addEventListener('click', () => {
+            EventBus.emit('continueRequested', lastPos);
+            el.innerHTML = '';
+        });
+        document.getElementById('vtv-continue-dismiss')?.addEventListener('click', () => { el.innerHTML = ''; });
+    }
+
     // ─── Countdown ────────────────────────────────────────────────────────────
     function updateCountdown(remaining) {
         const row = document.getElementById('vtv-cd-row');
@@ -641,7 +674,7 @@ const UI = (() => {
         init,
         showSearching, showWrongChannel, showUnavailable, showUnrecognized,
         showAutoplay, showOutOfOrder, showFound, showNotFound,
-        appendMissingWarning, scrollToCurrentInPlaylist,
+        appendMissingWarning, showContinuePrompt, scrollToCurrentInPlaylist,
         get panel() { return _panel; },
     };
 })();

@@ -71,8 +71,27 @@ const Storage = (() => {
     function addToHistory(seriesKey, episode, url, title) {
         const h = getHistory(seriesKey);
         if (!h.find(e => e.episode === episode)) {
-            h.push({ episode, url, title });
+            h.push({ episode, url, title, watchedAt: Date.now() });
             set('history_' + seriesKey, JSON.stringify(h));
+        }
+    }
+
+    /**
+     * Enumerate TOÀN BỘ series đã có lịch sử xem (cần GM_listValues vì
+     * GM storage không có API "list theo prefix" trực tiếp, phải tự lọc).
+     * @returns {Array<{seriesKey:string, episodes:Array}>}
+     */
+    function getAllHistory() {
+        try {
+            const p = _prefix(); // per-profile prefix, ví dụ 'vtvUlt_default_'
+            const keys = GM_listValues().filter(k => k.startsWith(p + 'history_'));
+            return keys.map(k => {
+                const seriesKey = k.slice((p + 'history_').length);
+                return { seriesKey, episodes: getHistory(seriesKey) };
+            }).filter(s => s.episodes.length > 0);
+        } catch (e) {
+            warn('[Storage] Lỗi khi enumerate history:', e);
+            return [];
         }
     }
 
@@ -122,6 +141,27 @@ const Storage = (() => {
             ? { watched, total: totalEpisodes, percent: Math.round(watched / totalEpisodes * 100) }
             : { watched, total: '?', percent: 0 };
     }
+
+    // ─── Vị trí xem dở (continue-where-left-off) ──────────────────────────────
+    // Riêng biệt với addStats (vốn track tổng THỜI GIAN đã xem cộng dồn, không
+    // phải VỊ TRÍ hiện tại) — cần lưu currentTime/duration để tính % thật và
+    // biết chính xác nên resume từ đâu.
+    /** @returns {{episode:number, currentTime:number, duration:number, updatedAt:number}|null} */
+    function getLastPosition(seriesKey) {
+        return GM_getValue('vtvUlt_lastpos_' + seriesKey, null);
+    }
+
+    function saveLastPosition(seriesKey, episode, currentTime, duration, url) {
+        // Không lưu nếu đã xem gần hết (>95%) — coi như đã xong tập, không cần
+        // resume nữa, tránh hỏi "xem tiếp tập cũ" cho tập đã hoàn thành.
+        if (duration > 0 && currentTime / duration > 0.95) {
+            GM_deleteValue('vtvUlt_lastpos_' + seriesKey);
+            return;
+        }
+        GM_setValue('vtvUlt_lastpos_' + seriesKey, { episode, currentTime, duration, url, updatedAt: Date.now() });
+    }
+
+    function clearLastPosition(seriesKey) { GM_deleteValue('vtvUlt_lastpos_' + seriesKey); }
 
     // ─── Watch later ──────────────────────────────────────────────────────────
     function getWatchLater() { return get('watchLater') || []; }
@@ -183,7 +223,7 @@ const Storage = (() => {
     }
 
     // ─── Feature flags (persisted toggles) ───────────────────────────────────
-    /** @returns {{autoPlay,marathon,autoSkip,voiceEnabled,audioMode,pipEnabled}} */
+    /** @returns {{autoPlay,marathon,autoSkip,voiceEnabled,audioMode,pipEnabled,sponsorBlock}} */
     function getFeatureFlags() {
         return {
             autoPlay:     getGlobal('auto',      true),
@@ -192,6 +232,11 @@ const Storage = (() => {
             voiceEnabled: getGlobal('voice',     true),
             audioMode:    getGlobal('audioMode', false),
             pipEnabled:   getGlobal('pip',       true),
+            // Mặc định false: gọi network ra server bên thứ 3 (sponsor.ajay.app)
+            // cho MỖI video, nên để user tự bật thay vì âm thầm bật sẵn.
+            sponsorBlock: getGlobal('sponsorBlock', false),
+            watchParty:   getGlobal('watchParty', false),
+            chapterDetect: getGlobal('chapterDetect', false),
         };
     }
 
@@ -202,9 +247,10 @@ const Storage = (() => {
         getGlobal, setGlobal,
         currentProfile, switchProfile, setupProfileMenu,
         getSeries, saveSeries, clearSeries,
-        getHistory, addToHistory,
+        getHistory, addToHistory, getAllHistory,
         getSkipData, learnSkip,
         addStats, getProgress,
+        getLastPosition, saveLastPosition, clearLastPosition,
         addToWatchLater, getWatchLater,
         getNotes, addNote,
         getVirtualPlaylistCache, saveVirtualPlaylistCache,

@@ -41,10 +41,34 @@
     });
 
     // Stats on videoReady
+    const _askedContinuePrompt = new Set();
     EventBus.on('videoReady', ({ duration }) => {
         if (window._vtvSeriesKey && window._vtvParsedInfo?.episode)
             Storage.addStats(window._vtvSeriesKey, window._vtvParsedInfo.episode, duration);
+
+        // Continue-where-left-off: nếu có vị trí dở của TẬP KHÁC (không phải
+        // tập đang mở), hỏi user có muốn xem nốt tập đó không. Chỉ hỏi 1 lần
+        // mỗi lần vào trang (không lặp lại hỏi mỗi khi videoReady fire lại).
+        const seriesKey = window._vtvSeriesKey;
+        if (seriesKey && !_askedContinuePrompt.has(seriesKey)) {
+            _askedContinuePrompt.add(seriesKey);
+            const lastPos = Storage.getLastPosition(seriesKey);
+            if (lastPos && lastPos.episode !== window._vtvParsedInfo?.episode) {
+                UI.showContinuePrompt(lastPos);
+            }
+        }
     });
+
+    // Lưu vị trí xem dở định kỳ (5s) — đủ để resume gần đúng mà không ghi
+    // GM storage quá thường xuyên (mỗi lần ghi có chi phí I/O, không cần lưu
+    // mỗi frame như _rafTick vốn phục vụ mục đích khác — auto-next countdown).
+    setInterval(() => {
+        const v = VideoContext.getVideoEl();
+        const seriesKey = window._vtvSeriesKey;
+        const episode   = window._vtvParsedInfo?.episode;
+        if (!v || !seriesKey || !episode || v.paused) return;
+        Storage.saveLastPosition(seriesKey, episode, v.currentTime, v.duration || 0, location.href);
+    }, 5000);
 
     // Stats on ended
     EventBus.on('videoEnded', () => {
@@ -53,6 +77,20 @@
     });
 
     EventBus.on('cancelRedirect',   () => VideoContext.cancelRedirect());
+
+    // Continue-where-left-off: navigate tới URL đã lưu, seek tới vị trí cũ
+    // ngay khi video mới sẵn sàng. Dùng `once` để tự huỷ sau 1 lần — tránh
+    // seek nhầm vào lần videoReady tiếp theo (ví dụ user tự chuyển tập khác
+    // ngay sau đó) không liên quan gì tới yêu cầu continue này.
+    EventBus.on('continueRequested', (lastPos) => {
+        if (!lastPos?.url) return;
+        EventBus.once('videoReady', () => {
+            // Đợi 1 khoảng ngắn cho video thực sự có thể seek (readyState đủ),
+            // tương tự cách auto-skip intro trong video-context.js đã làm.
+            setTimeout(() => PlayerControl.seekTo(lastPos.currentTime), 500);
+        });
+        Navigator.goTo(lastPos.url);
+    });
     EventBus.on('outOfOrderIgnored', () => {
         if (window._vtvSeriesKey) Storage.clearSeries(window._vtvSeriesKey);
         _runMain();
@@ -151,6 +189,12 @@
             // 7. Attach video context
             VideoContext.attach(seriesKey, { autoPlay: flags.autoPlay, autoSkip: flags.autoSkip });
 
+            // 7b. SponsorBlock — luôn disable trước (segment của video cũ
+            // không được áp dụng nhầm sang video mới), rồi enable lại nếu
+            // user đã bật tính năng này.
+            SponsorBlock.disable();
+            if (flags.sponsorBlock) SponsorBlock.enable(videoId);
+
             // 8. Episode discovery (nhiều await bên trong — check lại sau khi xong)
             await EpisodeEngine.run(info, channelName, seriesKey);
             if (_stale()) return;
@@ -179,6 +223,14 @@
     }
 
     document.addEventListener('yt-navigate-finish', _onNavigate);
+
+    // ─── Menu commands ──────────────────────────────────────────────────────
+    GM_registerMenuCommand('📺 Xem lịch sử & Export', () => HistoryViewer.open());
+
+    // Auto-downgrade quality khi buffering liên tục — bật mặc định vì rủi ro
+    // thấp (chỉ hoạt động khi PlayerControl.getQuality() khả dụng, tự no-op
+    // an toàn nếu không) và lợi ích rõ ràng (giảm giật lag trên mạng chậm).
+    BufferMonitor.enable();
 
     // ─── Initial load ─────────────────────────────────────────────────────────
     if (location.pathname === '/watch') {

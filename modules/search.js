@@ -4,11 +4,17 @@
 const Search = (() => {
     /** @type {Map<string, {data: Array, timestamp: number}>} */
     const _cache = new Map();
+    /** @type {Map<string, Promise>} query đang fetch dở, để coalesce request trùng */
+    const _inFlight = new Map();
 
     function _cacheKey(q) { return q.toLowerCase().trim(); }
 
     /**
      * Search YouTube. Results cached for SEARCH_CACHE_TTL ms.
+     * Nếu có request khác đang fetch CÙNG query, gộp lại thành 1 network call
+     * (request coalescing) — tránh trường hợp Path B của episode-navigator gọi
+     * Promise.all với nhiều query có thể trùng nhau, hoặc 2 tab/2 lần gọi gần
+     * nhau trước khi cache kịp ghi.
      * @param {string} query
      * @returns {Promise<Array<{title:string, videoId:string}>>}
      */
@@ -20,6 +26,19 @@ const Search = (() => {
             return hit.data;
         }
 
+        const existing = _inFlight.get(key);
+        if (existing) { log('[Search] coalesce vào request đang chạy:', query); return existing; }
+
+        const promise = _doFetch(query, key);
+        _inFlight.set(key, promise);
+        try {
+            return await promise;
+        } finally {
+            _inFlight.delete(key);
+        }
+    }
+
+    async function _doFetch(query, key) {
         log('[Search] fetch:', query);
         try {
             const res  = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`);
