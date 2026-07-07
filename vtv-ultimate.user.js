@@ -13,6 +13,7 @@
 // @grant        GM_listValues
 // @grant        GM_notification
 // @grant        unsafeWindow
+// @grant        GM_xmlhttpRequest
 // @connect      sponsor.ajay.app
 //
 // Load order is explicit and maps to the dependency graph:

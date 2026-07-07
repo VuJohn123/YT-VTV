@@ -213,6 +213,16 @@ GM_addStyle(`
     border-radius: 8px; padding: 6px 10px;
     font-size: 11.5px; color: #f0c040; line-height: 1.4;
 }
+.vtv-btn-mini {
+    background: rgba(62,166,255,.15); border: 1px solid rgba(62,166,255,.35);
+    color: #a8d4ff; border-radius: 6px; padding: 3px 8px; margin-left: 6px;
+    font-size: 11px; cursor: pointer; font-weight: 600;
+}
+.vtv-btn-mini:hover { background: rgba(62,166,255,.25); }
+.vtv-btn-mini-ghost {
+    background: transparent; border-color: rgba(255,255,255,.15); color: #999;
+}
+.vtv-btn-mini-ghost:hover { background: rgba(255,255,255,.06); }
 
 /* ── Voice label ────────────────────────────────────────────────────────── */
 #vtv-voice-label {

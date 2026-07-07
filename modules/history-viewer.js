@@ -79,7 +79,7 @@ const HistoryViewer = (() => {
     <button id="export-json-all">⬇ Export tất cả (JSON)</button>
   </div>
 <script>
-  const DATA = ${JSON.stringify(allHistory)};
+  const DATA = ${JSON.stringify(allHistory).replace(/<\/script/gi, '<\\/script')};
   function download(filename, content, mime) {
     const blob = new Blob([content], { type: mime });
     const a = document.createElement('a');
@@ -89,8 +89,9 @@ const HistoryViewer = (() => {
   }
   function toM3U(series) {
     let out = '#EXTM3U\\n';
+    const cleanName = series.seriesKey.split('|')[0].replace(/[\\r\\n]+/g, ' ');
     for (const ep of series.episodes.slice().sort((a,b)=>a.episode-b.episode)) {
-      out += '#EXTINF:-1,' + (series.seriesKey.split('|')[0]) + ' - Tập ' + ep.episode + '\\n' + ep.url + '\\n';
+      out += '#EXTINF:-1,' + cleanName + ' - Tập ' + ep.episode + '\\n' + ep.url + '\\n';
     }
     return out;
   }

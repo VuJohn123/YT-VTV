@@ -27,6 +27,26 @@ const SponsorBlock = (() => {
     }
 
     /**
+     * Wrapper Promise cho GM_xmlhttpRequest — dùng thay vì fetch() vì đây là
+     * request CROSS-ORIGIN thật (sponsor.ajay.app, khác origin youtube.com).
+     * fetch() thường vẫn bị same-origin policy chặn nếu server không trả đúng
+     * CORS header cho origin gọi tới, và @connect trong userscript header CHỈ
+     * có tác dụng với GM_xmlhttpRequest — không ảnh hưởng gì tới fetch(). Dùng
+     * GM_xmlhttpRequest đảm bảo hoạt động chắc chắn bất kể server có cấu hình
+     * CORS đúng hay không.
+     */
+    function _gmFetch(url) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'GET', url,
+                onload: (res) => resolve(res),
+                onerror: (err) => reject(err),
+                ontimeout: () => reject(new Error('timeout')),
+            });
+        });
+    }
+
+    /**
      * Lấy danh sách segment cho 1 video, dùng cache 30 phút.
      * @returns {Promise<Array<{category:string, start:number, end:number}>>} rỗng nếu không có/lỗi
      */
@@ -39,15 +59,15 @@ const SponsorBlock = (() => {
             const hash = await _sha256Hex(videoId);
             const prefix = hash.slice(0, 4);
             const url = `${API_BASE}/${prefix}?categories=${encodeURIComponent(JSON.stringify(categories))}`;
-            const res = await fetch(url);
+            const res = await _gmFetch(url);
 
             // 404 nghĩa là KHÔNG có video nào trùng prefix có segment — hoàn
             // toàn bình thường (phần lớn video VTV sẽ rơi vào trường hợp này),
             // không phải lỗi, không log warning.
             if (res.status === 404) { _cache.set(videoId, { segments: [], timestamp: Date.now() }); return []; }
-            if (!res.ok) { warn('[SponsorBlock] HTTP', res.status); return []; }
+            if (res.status < 200 || res.status >= 300) { warn('[SponsorBlock] HTTP', res.status); return []; }
 
-            const data = await res.json();
+            const data = JSON.parse(res.responseText);
             // Server trả về nhiều video cùng prefix hash — lọc đúng video của mình
             const match = data.find(v => v.videoID === videoId);
             const segments = (match?.segments || []).map(s => ({
