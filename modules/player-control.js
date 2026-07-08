@@ -14,7 +14,22 @@
 // discrete steps của YouTube). Không method nào được tin tưởng single-point.
 
 const PlayerControl = (() => {
-    function _player() { return document.getElementById('movie_player'); }
+    /**
+     * Lấy internal player object. 2 tầng fallback:
+     * 1. #movie_player trực tiếp expose API (build YouTube phổ biến hiện nay)
+     * 2. yt.player.getPlayerByElement (một số build cũ hơn không expose thẳng
+     *    trên #movie_player, cần đi qua namespace yt.player toàn cục)
+     */
+    function _player() {
+        const mp = document.getElementById('movie_player');
+        if (mp && typeof mp.getAvailableQualityLevels === 'function') return mp;
+        try {
+            const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+            const p = win.yt?.player?.getPlayerByElement?.(document.querySelector('#movie_player'));
+            if (p && typeof p.getAvailableQualityLevels === 'function') return p;
+        } catch (e) { /* fall through */ }
+        return document.getElementById('movie_player'); // fallback thô, có thể thiếu API nhưng vẫn hữu ích cho play/pause/fullscreen qua <video>
+    }
     function _video()  { return VideoContext.getVideoEl(); }
 
     // ─── SEEK ───────────────────────────────────────────────────────────────
@@ -112,6 +127,21 @@ const PlayerControl = (() => {
     }
 
     /**
+     * Trả về mức chất lượng THẤP NHẤT thực sự tồn tại cho video này (loại trừ
+     * 'auto' vì đó không phải 1 mức cụ thể). Dùng khi cần ép video xuống tối
+     * thiểu để tiết kiệm băng thông (ví dụ AudioMode — chỉ nghe không cần xem).
+     * @returns {string} label quality thấp nhất, mặc định 'tiny' nếu không xác định được
+     */
+    function getLowestQuality() {
+        try {
+            // levels thường xếp thứ tự cao→thấp, ví dụ ['hd1080','hd720','large','medium','small','tiny','auto']
+            const levels = getAvailableQualities();
+            const real = levels.filter(l => l !== 'auto');
+            return real[real.length - 1] ?? 'tiny';
+        } catch (e) { return 'tiny'; }
+    }
+
+    /**
      * Đặt chất lượng video. accepts: 'auto', 'hd1080', 'hd720', 'large',
      * 'medium', 'small', 'tiny', hoặc số (1080, 720...) sẽ tự map sang label.
      * @returns {boolean} true nếu gọi API thành công (không đảm bảo YouTube áp dụng — nó có thể no-op tuỳ điều kiện mạng).
@@ -153,11 +183,26 @@ const PlayerControl = (() => {
     }
 
     // ─── PICTURE-IN-PICTURE ───────────────────────────────────────────────────
+    /** @returns {Promise<boolean>} true nếu request thành công */
+    async function enterPiP() {
+        const v = _video();
+        if (!v || document.pictureInPictureElement) return false;
+        try { await v.requestPictureInPicture(); return true; }
+        catch (e) { return false; }
+    }
+
+    /** @returns {Promise<boolean>} true nếu exit thành công */
+    async function exitPiP() {
+        if (!document.pictureInPictureElement) return false;
+        try { await document.exitPictureInPicture(); return true; }
+        catch (e) { return false; }
+    }
+
     function togglePiP() {
         const v = _video();
         if (!v) return false;
-        if (!document.pictureInPictureElement) v.requestPictureInPicture?.().catch(() => {});
-        else document.exitPictureInPicture?.();
+        if (!document.pictureInPictureElement) enterPiP();
+        else exitPiP();
         return true;
     }
 
@@ -165,9 +210,9 @@ const PlayerControl = (() => {
         seekTo, seekBy,
         setRate, getRate, getAvailableRates,
         setVolume, getVolume, mute, unmute, isMuted,
-        setQuality, getQuality, getAvailableQualities,
+        setQuality, getQuality, getAvailableQualities, getLowestQuality,
         enterFullscreen, exitFullscreen, toggleFullscreen,
         play, pause, togglePlay,
-        togglePiP,
+        togglePiP, enterPiP, exitPiP,
     };
 })();

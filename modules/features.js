@@ -84,58 +84,6 @@ const AudioMode = (() => {
     let _prevQuality = null;   // e.g. 'hd1080', 'hd720', 'large', 'medium', 'small', 'tiny', 'auto'
     let _active      = false;
 
-    // ── Internal player API ────────────────────────────────────────────────
-    function _getInternalPlayer() {
-        // Primary: movie_player element exposes yt player API directly
-        const mp = document.getElementById('movie_player');
-        if (mp && typeof mp.getAvailableQualityLevels === 'function') return mp;
-
-        // Secondary: yt.player namespace (older builds)
-        try {
-            const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-            const p = win.yt?.player?.getPlayerByElement?.(document.querySelector('#movie_player'));
-            if (p && typeof p.getAvailableQualityLevels === 'function') return p;
-        } catch (e) {}
-
-        return null;
-    }
-
-    function _setQuality(levelStr) {
-        const player = _getInternalPlayer();
-        if (!player) { warn('[AudioMode] no internal player found'); return false; }
-        try {
-            // setPlaybackQualityRange locks both min and max → forces exact quality
-            if (typeof player.setPlaybackQualityRange === 'function') {
-                player.setPlaybackQualityRange(levelStr, levelStr);
-            } else {
-                player.setPlaybackQuality(levelStr);
-            }
-            log('[AudioMode] quality set to', levelStr);
-            return true;
-        } catch (e) {
-            warn('[AudioMode] setQuality failed:', e);
-            return false;
-        }
-    }
-
-    function _getCurrentQuality() {
-        const player = _getInternalPlayer();
-        if (!player) return null;
-        try { return player.getPlaybackQuality?.() ?? null; } catch (e) { return null; }
-    }
-
-    function _getLowestQuality() {
-        const player = _getInternalPlayer();
-        if (!player) return 'tiny';
-        try {
-            const levels = player.getAvailableQualityLevels?.() ?? [];
-            // levels ordered highest→lowest, e.g. ['hd1080','hd720','large','medium','small','tiny','auto']
-            // 'auto' is last but we want the last *real* level before auto
-            const real = levels.filter(l => l !== 'auto');
-            return real[real.length - 1] ?? 'tiny';
-        } catch (e) { return 'tiny'; }
-    }
-
     // ── Overlay ────────────────────────────────────────────────────────────
     function _initOverlay() {
         if (_overlay) return;
@@ -160,12 +108,13 @@ const AudioMode = (() => {
         _active = true;
         Storage.saveFlag('audioMode', true);
 
-        // Save current quality before lowering
-        const cur = _getCurrentQuality();
+        // Save current quality before lowering — dùng PlayerControl thay vì tự
+        // viết lại logic get/set quality (xem player-control.js).
+        const cur = PlayerControl.getQuality();
         if (cur && cur !== 'tiny' && cur !== 'small') _prevQuality = cur;
 
-        const lowest = _getLowestQuality();
-        _setQuality(lowest);
+        const lowest = PlayerControl.getLowestQuality();
+        PlayerControl.setQuality(lowest);
 
         _initOverlay();
         if (_overlay) _overlay.style.display = 'block';
@@ -182,11 +131,11 @@ const AudioMode = (() => {
 
         // Restore quality — if no saved quality, fallback to 'auto'
         const restoreTo = _prevQuality ?? 'auto';
-        const ok = _setQuality(restoreTo);
+        const ok = PlayerControl.setQuality(restoreTo);
 
         // If setQuality failed or player not ready yet, retry once after 1s
         if (!ok) {
-            setTimeout(() => _setQuality(restoreTo), 1000);
+            setTimeout(() => PlayerControl.setQuality(restoreTo), 1000);
         }
         _prevQuality = null;
 
@@ -200,7 +149,7 @@ const AudioMode = (() => {
     EventBus.on('audioModeEnable',  enable);
     EventBus.on('audioModeDisable', disable);
     // Re-apply on navigation (quality resets on new video)
-    EventBus.on('videoReady', () => { if (_active) { setTimeout(() => _setQuality(_getLowestQuality()), 800); } });
+    EventBus.on('videoReady', () => { if (_active) { setTimeout(() => PlayerControl.setQuality(PlayerControl.getLowestQuality()), 800); } });
 
     return { enable, disable, isActive: () => _active };
 })();
@@ -217,9 +166,9 @@ const AutoPiP = (() => {
         const v = VideoContext.getVideoEl();
         if (!v || !_enabled) return;
         if (document.hidden && !v.paused && !document.pictureInPictureElement) {
-            try { await v.requestPictureInPicture(); _active = true; } catch (e) {}
+            if (await PlayerControl.enterPiP()) _active = true;
         } else if (!document.hidden && _active && document.pictureInPictureElement) {
-            try { await document.exitPictureInPicture(); _active = false; } catch (e) {}
+            if (await PlayerControl.exitPiP()) _active = false;
         }
     }
 
@@ -239,7 +188,7 @@ const AutoPiP = (() => {
         document.removeEventListener('visibilitychange', _check);
         if (_interval) { clearInterval(_interval); _interval = null; }
         if (_active && document.pictureInPictureElement) {
-            document.exitPictureInPicture().catch(() => {});
+            PlayerControl.exitPiP();
             _active = false;
         }
         log('[AutoPiP] disabled');
@@ -575,6 +524,7 @@ const VoiceControl = (() => {
         }
         if (/\b(marathon|xem liên tục)\b/.test(t)) {
             const nv = !Storage.getFeatureFlags().marathon;
+            Storage.saveFlag('marathon', nv);
             EventBus.emit('modeChange', { key: 'marathon', value: nv });
             _notify('Marathon ' + (nv ? 'ON' : 'OFF')); return;
         }
@@ -726,7 +676,9 @@ const Keyboard = (() => {
             // NATIVE của YouTube — dùng M trơn sẽ khiến cả 2 handler chạy cùng
             // lúc (vừa mute vừa toggle marathon), rất khó hiểu cho user.
             if (e.shiftKey && (e.key === 'm' || e.key === 'M')) {
-                EventBus.emit('modeChange', { key: 'marathon', value: !Storage.getFeatureFlags().marathon });
+                const nv = !Storage.getFeatureFlags().marathon;
+                Storage.saveFlag('marathon', nv);
+                EventBus.emit('modeChange', { key: 'marathon', value: nv });
                 return;
             }
 

@@ -193,6 +193,32 @@ GM_addStyle(`
     scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent;
 }
 #vtv-list-wrap.vtv-list-open #vtv-list-inner { max-height: 200px; }
+
+/* ── Advanced toggles group (collapsible, cùng pattern với list tập) ────── */
+#vtv-adv-wrap {
+    background: rgba(0,0,0,0.25); border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.06);
+    overflow: hidden;
+}
+#vtv-adv-hd {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 10px; cursor: pointer;
+    font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: .4px;
+}
+#vtv-adv-hd:hover { color: #aaa; }
+#vtv-adv-caret { transition: transform .25s; font-style: normal; }
+#vtv-adv-wrap.vtv-adv-open #vtv-adv-caret { transform: rotate(180deg); }
+#vtv-adv-inner {
+    max-height: 0; overflow: hidden;
+    transition: max-height .25s ease;
+}
+/* max-height đủ lớn cho 3 toggle hiện tại; không cần overflow-y auto vì nhóm
+   này chỉ vài item, không phải danh sách dài như list tập. */
+#vtv-adv-wrap.vtv-adv-open #vtv-adv-inner { max-height: 60px; }
+#vtv-toggles-adv {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+    padding: 4px;
+}
 .vtv-ep-item {
     display: flex; align-items: center; gap: 7px;
     padding: 6px 10px; text-decoration: none;
@@ -298,6 +324,15 @@ const UI = (() => {
                         <div id="vtv-list-inner"></div>
                     </div>
                     <div id="vtv-toggles"></div>
+                    <div id="vtv-adv-wrap">
+                        <div id="vtv-adv-hd">
+                            <span>Tính năng nâng cao</span>
+                            <i id="vtv-adv-caret">▾</i>
+                        </div>
+                        <div id="vtv-adv-inner">
+                            <div id="vtv-toggles-adv"></div>
+                        </div>
+                    </div>
                     <div id="vtv-warnings"></div>
                 </div>
             </div>`;
@@ -360,6 +395,11 @@ const UI = (() => {
             document.getElementById('vtv-list-wrap').classList.toggle('vtv-list-open', _listOpen);
         });
 
+        // Advanced toggles group — thu gọn mặc định, mở/đóng khi click header
+        document.getElementById('vtv-adv-hd').addEventListener('click', () => {
+            document.getElementById('vtv-adv-wrap').classList.toggle('vtv-adv-open');
+        });
+
         // Drag
         _makeDraggable(document.getElementById('vtv-header'));
     }
@@ -410,17 +450,24 @@ const UI = (() => {
         { id: 'tog-voice',    flag: 'voiceEnabled', gm: 'voice',     icon: '🎤', label: 'Voice'     },
         { id: 'tog-audio',    flag: 'audioMode',    gm: 'audioMode', icon: '🔇', label: 'Audio'     },
         { id: 'tog-pip',      flag: 'pipEnabled',   gm: 'pip',       icon: '🖼',  label: 'PiP'       },
-        { id: 'tog-sb',       flag: 'sponsorBlock', gm: 'sponsorBlock', icon: '🚫', label: 'Skip Sponsor' },
-        { id: 'tog-wp',       flag: 'watchParty',   gm: 'watchParty', icon: '🔗', label: 'Watch Party' },
-        { id: 'tog-chap',     flag: 'chapterDetect', gm: 'chapterDetect', icon: '📑', label: 'Chapters' },
+        { id: 'tog-sb',       flag: 'sponsorBlock', gm: 'sponsorBlock', icon: '🚫', label: 'Skip Sponsor', advanced: true },
+        { id: 'tog-wp',       flag: 'watchParty',   gm: 'watchParty', icon: '🔗', label: 'Watch Party', advanced: true },
+        { id: 'tog-chap',     flag: 'chapterDetect', gm: 'chapterDetect', icon: '📑', label: 'Chapters', advanced: true },
     ];
 
     function _renderToggles() {
-        const grid = document.getElementById('vtv-toggles');
-        if (!grid) return;
-        grid.innerHTML = '';
+        const grid    = document.getElementById('vtv-toggles');
+        const gridAdv = document.getElementById('vtv-toggles-adv');
+        const advWrap = document.getElementById('vtv-adv-wrap');
+        if (!grid || !gridAdv) return;
+        grid.innerHTML = ''; gridAdv.innerHTML = '';
+
+        let anyAdvancedOn = false;
+
         for (const def of TOGGLE_DEFS) {
             const on  = !!_flags[def.flag];
+            if (def.advanced && on) anyAdvancedOn = true;
+
             const tog = document.createElement('label');
             tog.className = 'vtv-tog' + (on ? ' vtv-on' : '');
             tog.id = def.id;
@@ -429,8 +476,11 @@ const UI = (() => {
             tog.querySelector('input').addEventListener('change', e => {
                 const val = e.target.checked;
                 _flags[def.flag] = val;
-                tog.classList.toggle('vtv-on', val);
                 Storage.saveFlag(def.gm, val);
+                // EventBus.emit('modeChange') là nguồn chân lý DUY NHẤT cập nhật
+                // UI (class 'vtv-on', checked state, mở nhóm nâng cao nếu cần) —
+                // xem listener modeChange bên dưới. Không set thủ công ở đây nữa
+                // để tránh 2 nơi cùng làm 1 việc dễ lệch nhau khi sửa code sau này.
                 EventBus.emit('modeChange', { key: def.flag, value: val });
                 // Feature-specific side events
                 if (def.flag === 'voiceEnabled') EventBus.emit(val ? 'voiceStart'       : 'voiceStop');
@@ -443,8 +493,13 @@ const UI = (() => {
                 if (def.flag === 'watchParty') val ? WatchParty.enable() : WatchParty.disable();
                 if (def.flag === 'chapterDetect') val ? ChapterDetector.enable() : ChapterDetector.disable();
             });
-            grid.appendChild(tog);
+            (def.advanced ? gridAdv : grid).appendChild(tog);
         }
+
+        // Tự mở nhóm nâng cao nếu có tính năng nào trong đó đang bật — tránh
+        // trạng thái "user đã bật SponsorBlock nhưng panel hiện thu gọn, nhìn
+        // như tính năng biến mất" gây khó hiểu ở lần mở panel tiếp theo.
+        if (anyAdvancedOn && advWrap) advWrap.classList.add('vtv-adv-open');
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -678,7 +733,23 @@ const UI = (() => {
     EventBus.on('countdownStart',  ({ total })       => startCountdown(total));
     EventBus.on('countdownCancel', ()                => clearCountdown());
     EventBus.on('voiceLabel',      ({ text })        => setVoiceLabel(text));
-    EventBus.on('modeChange',      ({ key, value })  => { _flags[key] = value; });
+    EventBus.on('modeChange', ({ key, value }) => {
+        _flags[key] = value;
+        // Đồng bộ lại checkbox DOM tương ứng — trước đây chỉ update biến
+        // _flags trong bộ nhớ, khiến UI panel không phản ánh đúng trạng thái
+        // khi tính năng được bật/tắt từ nguồn khác (voice command, ví dụ
+        // "bật sponsorblock") thay vì click trực tiếp vào checkbox.
+        const def = TOGGLE_DEFS.find(d => d.flag === key);
+        if (!def) return;
+        const tog = document.getElementById(def.id);
+        if (!tog) return;
+        tog.classList.toggle('vtv-on', value);
+        const input = tog.querySelector('input');
+        if (input) input.checked = value;
+        // Nếu vừa bật 1 toggle nâng cao từ nguồn ngoài UI, mở nhóm ra để user
+        // thấy phản hồi visual thay vì phải tự tìm.
+        if (def.advanced && value) document.getElementById('vtv-adv-wrap')?.classList.add('vtv-adv-open');
+    });
 
     return {
         init,
