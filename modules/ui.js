@@ -445,13 +445,13 @@ const UI = (() => {
     // ─── Toggles ──────────────────────────────────────────────────────────────
     const TOGGLE_DEFS = [
         { id: 'tog-auto',     flag: 'autoPlay',     gm: 'auto',      icon: '⏭', label: 'Tự chuyển' },
-        { id: 'tog-marathon', flag: 'marathon',     gm: 'marathon',  icon: '🏃', label: 'Marathon'  },
+        { id: 'tog-marathon', flag: 'marathon',     gm: 'marathon',  icon: '🚫', label: 'Chặn QC'  }, // flag/gm key giữ tên cũ 'marathon' để không phá dữ liệu user đã lưu, nhưng thực chất đây là AdBlock toggle (xem AdBlock module trong features.js) — label đổi cho đúng bản chất, tránh nhầm lẫn với tính năng xem liên tục nhiều tập.
         { id: 'tog-skip',     flag: 'autoSkip',     gm: 'autoskip',  icon: '⏩', label: 'Skip Intro'},
         { id: 'tog-voice',    flag: 'voiceEnabled', gm: 'voice',     icon: '🎤', label: 'Voice'     },
         { id: 'tog-audio',    flag: 'audioMode',    gm: 'audioMode', icon: '🔇', label: 'Audio'     },
         { id: 'tog-pip',      flag: 'pipEnabled',   gm: 'pip',       icon: '🖼',  label: 'PiP'       },
         { id: 'tog-sb',       flag: 'sponsorBlock', gm: 'sponsorBlock', icon: '🚫', label: 'Skip Sponsor', advanced: true },
-        { id: 'tog-wp',       flag: 'watchParty',   gm: 'watchParty', icon: '🔗', label: 'Watch Party', advanced: true },
+        { id: 'tog-wp',       flag: 'watchParty',   gm: 'watchParty', icon: '🔗', label: 'Sync tab (cùng máy)', advanced: true }, // Chỉ đồng bộ giữa các tab CÙNG máy/CÙNG trình duyệt qua BroadcastChannel — KHÔNG phải xem chung qua mạng với người khác (khác Teleparty/Discord). Đổi label cho rõ, tránh hiểu lầm.
         { id: 'tog-chap',     flag: 'chapterDetect', gm: 'chapterDetect', icon: '📑', label: 'Chapters', advanced: true },
     ];
 

@@ -162,11 +162,61 @@ const VirtualPlaylist = (() => {
         return result;
     }
 
+    /**
+     * Build playlist từ 1 playlistId ĐÃ BIẾT CHẮC (ví dụ lấy từ URL param
+     * `list=` của video đang xem — khi YouTube tự gắn video vào ngữ cảnh
+     * playlist, đó gần như chắc chắn là playlist trọn bộ đúng series).
+     * Nhanh hơn build() thông thường vì bỏ qua hoàn toàn bước search + rank
+     * playlist ứng viên — chỉ có 1 network call (playlist page) thay vì 2+
+     * (search rồi mới fetch từng playlist ứng viên).
+     * @param {string} seriesName dùng làm cache key, giống build()
+     * @param {string} playlistId
+     * @returns {Promise<Array<{title:string, videoId:string}>>}
+     */
+    async function buildFromKnownPlaylist(seriesName, playlistId) {
+        const mKey = _memKey(seriesName);
+
+        const memHit = _memCache.get(mKey);
+        if (memHit && Date.now() - memHit.timestamp < VP_CACHE_TTL) {
+            log('[VirtualPlaylist] L1 hit (known playlist path):', seriesName);
+            return memHit.data;
+        }
+        const stored = Storage.getVirtualPlaylistCache(seriesName);
+        if (stored) {
+            log('[VirtualPlaylist] L2 hit (known playlist path):', seriesName);
+            _memCache.set(mKey, { data: stored, timestamp: Date.now() });
+            return stored;
+        }
+
+        log('[VirtualPlaylist] fetch trực tiếp từ playlist đã biết:', playlistId);
+        const videos = await _fetchVideosFromPlaylist(playlistId);
+        const result = _dedupAndSort(videos);
+
+        // Chỉ cache nếu playlist THỰC SỰ liên quan tới series này — kiểm tra
+        // bằng cách parse vài title đầu xem có chứa tên series không. Không
+        // chỉ dựa vào result.length > 0, vì URL's `list=` có thể trỏ tới 1
+        // playlist khác chủ đề hoàn toàn (ví dụ user click nhầm từ gợi ý) —
+        // nếu cache nhầm ở đây, mọi lần gọi build(seriesName) sau đó (kể cả
+        // qua nhánh search bình thường) sẽ đọc phải cache sai vĩnh viễn cho
+        // tới khi TTL hết hạn.
+        const nameHint = seriesName.toLowerCase().trim().split(' ')[0];
+        const looksRelevant = result.some(v => (v.title || '').toLowerCase().includes(nameHint));
+
+        if (result.length && looksRelevant) {
+            _memCache.set(mKey, { data: result, timestamp: Date.now() });
+            Storage.saveVirtualPlaylistCache(seriesName, result);
+        } else if (result.length && !looksRelevant) {
+            log('[VirtualPlaylist] playlist đã biết KHÔNG khớp series, bỏ qua cache:', playlistId);
+            return []; // để caller tự fallback sang build() (search) thay vì dùng data sai
+        }
+        return result;
+    }
+
     /** Invalidate caches for a series (e.g. user triggered refresh). */
     function invalidate(seriesName) {
         _memCache.delete(_memKey(seriesName));
         // Storage TTL will naturally expire; no direct delete API needed.
     }
 
-    return { build, invalidate };
+    return { build, buildFromKnownPlaylist, invalidate };
 })();

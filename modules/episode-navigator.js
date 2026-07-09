@@ -293,8 +293,21 @@ const EpisodeEngine = (() => {
     async function run(info, channel, seriesKey) {
         log('[EpisodeEngine] run:', info.series, 'S', info.season, 'ep', info.episode);
 
-        // 1. Build virtual playlist
-        const vpData = await VirtualPlaylist.build(info.series);
+        // 1. Build virtual playlist — ưu tiên playlist ĐÃ BIẾT từ URL hiện tại
+        // (param `list=`), vì khi YouTube tự gắn video vào ngữ cảnh playlist,
+        // đó gần như chắc chắn là playlist trọn bộ đúng series — nhanh hơn và
+        // chính xác hơn nhiều so với phải search bằng tên series (build()).
+        const knownPlaylistId = new URLSearchParams(location.search).get('list');
+        let vpData;
+        if (knownPlaylistId) {
+            vpData = await VirtualPlaylist.buildFromKnownPlaylist(info.series, knownPlaylistId);
+            // Nếu playlist đã biết không trả được gì hữu ích (playlist riêng
+            // tư, đã xoá, hoặc không thực sự chứa series này), fallback về
+            // build() thông thường thay vì bỏ cuộc.
+            if (!vpData?.length) vpData = await VirtualPlaylist.build(info.series);
+        } else {
+            vpData = await VirtualPlaylist.build(info.series);
+        }
 
         // 2. Build episode list (series-scoped cache)
         const list = await _buildList(info, channel, seriesKey, vpData);

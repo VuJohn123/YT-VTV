@@ -331,9 +331,21 @@ const VoiceControl = (() => {
     }
 
     function _processCommand(raw) {
-        // Normalize: lowercase, strip punctuation, collapse spaces
+        // Normalize: lowercase, chuẩn hoá số thập phân kiểu VN (1,5 → 1.5)
+        // TRƯỚC khi xoá dấu câu, rồi mới xoá phần còn lại. Thứ tự này quan
+        // trọng: xoá dấu phẩy trước khi xử lý sẽ biến "1,5" thành "15" (sai
+        // hoàn toàn giá trị số) — bug thật đã xảy ra với lệnh "tốc độ phát
+        // lên 1,5" bị hiểu thành 15x thay vì 1.5x.
         const t = raw.toLowerCase()
-            .replace(/[.,?!;:'"…]/g, '')
+            .replace(/(\d),(\d)/g, '$1.$2')      // "1,5" → "1.5" (số thập phân VN)
+            .replace(/[.,?!;:'"…]/g, (m, offset, str) => {
+                // Giữ lại dấu chấm nếu nó đang nằm GIỮA 2 chữ số (số thập phân
+                // đã chuẩn hoá ở bước trên), chỉ xoá dấu câu thật sự (cuối câu,
+                // liệt kê...).
+                const before = str[offset - 1], after = str[offset + 1];
+                if (m === '.' && /\d/.test(before) && /\d/.test(after)) return m;
+                return '';
+            })
             .replace(/\s+/g, ' ')
             .trim();
 
@@ -417,7 +429,13 @@ const VoiceControl = (() => {
 
         // ── 5. PLAY / PAUSE ───────────────────────────────────────────────
         if (/\b(dừng|tạm dừng|pause|ngừng|đứng lại)\b/.test(t))   { PlayerControl.pause(); _notify('Dừng'); return; }
-        if (/\b(phát|play|tiếp tục|chạy|chơi|bắt đầu)\b/.test(t)) { PlayerControl.play();  _notify('Phát'); return; }
+        // Loại trừ "phát" khi đứng sau "tốc độ" (ví dụ "tăng tốc độ phát lên
+        // 1,5") — đó là lệnh đổi tốc độ, không phải lệnh play. Trước đây regex
+        // này match nhầm và return sớm, khiến lệnh đổi tốc độ không bao giờ
+        // chạy tới được nhánh PLAYBACK SPEED phía dưới.
+        if (!/tốc độ\s*phát/.test(t) && /\b(phát|play|tiếp tục|chạy|chơi|bắt đầu)\b/.test(t)) {
+            PlayerControl.play();  _notify('Phát'); return;
+        }
         // Toggle
         if (/\b(toggle|bật tắt phát)\b/.test(t)) {
             PlayerControl.togglePlay(); _notify('Toggle'); return;
@@ -447,6 +465,23 @@ const VoiceControl = (() => {
 
         // ── 7. PLAYBACK SPEED ─────────────────────────────────────────────
         if (/\b(bình thường|tốc độ bình thường|1x|normal speed)\b/.test(t)) { _rate(1);    _notify('1x'); return; }
+
+        // Exact: "tốc độ 1.5" / "1.5x" / "hai lần" — kiểm tra TRƯỚC nhánh
+        // "nhanh hơn/tăng tốc" (tương đối, không có số), vì câu như "tăng tốc
+        // độ phát lên 1,5" chứa substring "tăng tốc" (bên trong "tăng tốc
+        // độ") nên sẽ bị nhánh tương đối nuốt mất nếu nó chạy trước — mất số
+        // 1.5 cụ thể mà user đã nói rõ.
+        {
+            const wordMap = { 'nửa': 0.5, 'một': 1, 'một rưỡi': 1.5, 'hai': 2, 'ba': 3 };
+            for (const [word, val] of Object.entries(wordMap)) {
+                if (t.includes(word + ' lần') || t.includes(word + 'x')) { _rate(val); _notify(val + 'x'); return; }
+            }
+            const m = t.match(/(?:tốc độ|speed)\D*?(\d+(?:\.\d+)?)/);
+            if (m) { _rate(+m[1]); _notify(m[1] + 'x'); return; }
+            const m2 = t.match(/(\d+(?:\.\d+)?)\s*x\b/);
+            if (m2) { _rate(+m2[1]); _notify(m2[1] + 'x'); return; }
+        }
+
         if (/\b(nhanh hơn|tăng tốc)\b/.test(t)) {
             const m = t.match(/(\d+(?:\.\d+)?)\s*x/);
             const step = m ? +m[1] : PlayerControl.getRate() + 0.25;
@@ -455,17 +490,6 @@ const VoiceControl = (() => {
         if (/\b(chậm hơn|giảm tốc)\b/.test(t)) {
             const cur = PlayerControl.getRate();
             _rate(cur - 0.25); _notify((cur - 0.25).toFixed(2) + 'x'); return;
-        }
-        // Exact: "tốc độ 1.5" / "1.5x" / "hai lần"
-        {
-            const wordMap = { 'nửa': 0.5, 'một': 1, 'một rưỡi': 1.5, 'hai': 2, 'ba': 3 };
-            for (const [word, val] of Object.entries(wordMap)) {
-                if (t.includes(word + ' lần') || t.includes(word + 'x')) { _rate(val); _notify(val + 'x'); return; }
-            }
-            const m = t.match(/(?:tốc độ|speed)\s*(\d+(?:\.\d+)?)/);
-            if (m) { _rate(+m[1]); _notify(m[1] + 'x'); return; }
-            const m2 = t.match(/(\d+(?:\.\d+)?)\s*x/);
-            if (m2) { _rate(+m2[1]); _notify(m2[1] + 'x'); return; }
         }
 
         // ── 8. FULLSCREEN ─────────────────────────────────────────────────
@@ -522,11 +546,15 @@ const VoiceControl = (() => {
             nv ? SponsorBlock.enable(vid) : SponsorBlock.disable();
             _notify('SponsorBlock ' + (nv ? 'ON' : 'OFF')); return;
         }
-        if (/\b(marathon|xem liên tục)\b/.test(t)) {
+        // Lưu ý: flag/gm key 'marathon' được giữ tên cũ để không phá dữ liệu
+        // user đã lưu, nhưng bản chất đây là AdBlock toggle (xem AdBlock module).
+        // 'marathon'/'xem liên tục' giữ lại cho backward-compat với người dùng
+        // cũ đã quen câu lệnh, nhưng thêm từ khoá đúng bản chất để tránh nhầm.
+        if (/\b(marathon|xem liên tục|chặn quảng cáo|chặn qc|bỏ quảng cáo)\b/.test(t)) {
             const nv = !Storage.getFeatureFlags().marathon;
             Storage.saveFlag('marathon', nv);
             EventBus.emit('modeChange', { key: 'marathon', value: nv });
-            _notify('Marathon ' + (nv ? 'ON' : 'OFF')); return;
+            _notify('Chặn quảng cáo ' + (nv ? 'ON' : 'OFF')); return;
         }
         if (/\b(audio mode|chế độ nghe|chỉ nghe|nghe thôi)\b/.test(t)) {
             const nv = !AudioMode.isActive();
