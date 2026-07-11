@@ -219,6 +219,31 @@ GM_addStyle(`
     display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
     padding: 4px;
 }
+
+/* ── Watch Party room panel ──────────────────────────────────────────────── */
+#vtv-room-panel {
+    padding: 8px; display: flex; flex-direction: column; gap: 6px;
+}
+.vtv-room-row { display: flex; gap: 6px; align-items: center; }
+.vtv-room-input {
+    flex: 1; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.15);
+    color: #eee; border-radius: 6px; padding: 5px 8px; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 1px; text-align: center;
+    min-width: 0;
+}
+.vtv-room-code {
+    font-size: 18px; font-weight: 700; letter-spacing: 3px; text-align: center;
+    color: #a8d4ff; background: rgba(62,166,255,.1); border: 1px solid rgba(62,166,255,.3);
+    border-radius: 8px; padding: 8px; user-select: all; cursor: pointer;
+}
+.vtv-room-status { font-size: 11px; color: #999; text-align: center; }
+.vtv-room-btn {
+    background: rgba(62,166,255,.18); border: 1px solid rgba(62,166,255,.4);
+    color: #cfe8ff; border-radius: 6px; padding: 6px 10px; font-size: 11.5px;
+    cursor: pointer; font-weight: 600; white-space: nowrap;
+}
+.vtv-room-btn:hover { background: rgba(62,166,255,.28); }
+.vtv-room-btn:disabled { opacity: .5; cursor: default; }
 .vtv-ep-item {
     display: flex; align-items: center; gap: 7px;
     padding: 6px 10px; text-decoration: none;
@@ -331,6 +356,7 @@ const UI = (() => {
                         </div>
                         <div id="vtv-adv-inner">
                             <div id="vtv-toggles-adv"></div>
+                            <div id="vtv-room-panel" style="display:none"></div>
                         </div>
                     </div>
                     <div id="vtv-warnings"></div>
@@ -455,6 +481,80 @@ const UI = (() => {
         { id: 'tog-chap',     flag: 'chapterDetect', gm: 'chapterDetect', icon: '📑', label: 'Chapters', advanced: true },
     ];
 
+    /**
+     * Render Room UI cho Watch Party remote tier (nhiều máy). 3 trạng thái:
+     * 1. Chưa vào phòng nào — nút "Tạo phòng" + ô nhập code để vào phòng có sẵn
+     * 2. Đang tạo/kết nối (loading) — disable nút, hiện "Đang kết nối..."
+     * 3. Đã trong phòng — hiện room code lớn (bấm để copy) + số người + nút Rời
+     */
+    function _renderRoomPanel() {
+        const el = document.getElementById('vtv-room-panel');
+        if (!el) return;
+
+        const info = WatchParty.getRoomInfo();
+
+        if (info.roomId) {
+            // Trạng thái 3: đang trong phòng
+            el.innerHTML = `
+                <div class="vtv-room-code" id="vtv-room-code-display" title="Bấm để copy">${info.roomId}</div>
+                <div class="vtv-room-status">${info.isHost ? 'Chủ phòng' : 'Khách'} · ${info.peerCount} người khác đang kết nối</div>
+                <button class="vtv-room-btn" id="vtv-room-leave-btn">Rời phòng</button>`;
+            document.getElementById('vtv-room-code-display')?.addEventListener('click', () => {
+                navigator.clipboard?.writeText(info.roomId).then(() => {
+                    EventBus.emit('voiceLabel', { text: '📋 Đã copy mã phòng' });
+                }).catch(() => {});
+            });
+            document.getElementById('vtv-room-leave-btn')?.addEventListener('click', () => {
+                WatchParty.leaveRoom();
+                _renderRoomPanel();
+            });
+            return;
+        }
+
+        if (!WatchParty.isRemoteSupported()) {
+            el.innerHTML = `<div class="vtv-room-status">⚠️ Trình duyệt không hỗ trợ WebRTC, không thể tạo phòng nhiều máy.</div>`;
+            return;
+        }
+
+        // Trạng thái 1: chưa vào phòng nào
+        el.innerHTML = `
+            <button class="vtv-room-btn" id="vtv-room-create-btn">➕ Tạo phòng mới</button>
+            <div class="vtv-room-row">
+                <input class="vtv-room-input" id="vtv-room-code-input" placeholder="Nhập mã phòng" maxlength="6">
+                <button class="vtv-room-btn" id="vtv-room-join-btn">Vào phòng</button>
+            </div>
+            <div class="vtv-room-status" id="vtv-room-msg"></div>`;
+
+        const msgEl = document.getElementById('vtv-room-msg');
+
+        document.getElementById('vtv-room-create-btn')?.addEventListener('click', async (e) => {
+            e.target.disabled = true;
+            msgEl.textContent = 'Đang tạo phòng...';
+            try {
+                await WatchParty.createRoom();
+                _renderRoomPanel();
+            } catch (err) {
+                msgEl.textContent = '❌ ' + (err.message || 'Lỗi tạo phòng');
+                e.target.disabled = false;
+            }
+        });
+
+        document.getElementById('vtv-room-join-btn')?.addEventListener('click', async (e) => {
+            const code = document.getElementById('vtv-room-code-input')?.value?.trim();
+            if (!code || code.length < 4) { msgEl.textContent = '❌ Nhập mã phòng hợp lệ'; return; }
+            e.target.disabled = true;
+            msgEl.textContent = 'Đang kết nối...';
+            try {
+                await WatchParty.joinRoom(code);
+                _renderRoomPanel();
+            } catch (err) {
+                msgEl.textContent = '❌ ' + (err.message || 'Không kết nối được');
+                e.target.disabled = false;
+            }
+        });
+    }
+
+
     function _renderToggles() {
         const grid    = document.getElementById('vtv-toggles');
         const gridAdv = document.getElementById('vtv-toggles-adv');
@@ -490,7 +590,14 @@ const UI = (() => {
                     const vid = new URLSearchParams(location.search).get('v');
                     val ? SponsorBlock.enable(vid) : SponsorBlock.disable();
                 }
-                if (def.flag === 'watchParty') val ? WatchParty.enable() : WatchParty.disable();
+                if (def.flag === 'watchParty') {
+                    val ? WatchParty.enable() : WatchParty.disable();
+                    const roomPanel = document.getElementById('vtv-room-panel');
+                    if (roomPanel) {
+                        roomPanel.style.display = val ? 'flex' : 'none';
+                        if (val) _renderRoomPanel();
+                    }
+                }
                 if (def.flag === 'chapterDetect') val ? ChapterDetector.enable() : ChapterDetector.disable();
             });
             (def.advanced ? gridAdv : grid).appendChild(tog);
@@ -500,6 +607,13 @@ const UI = (() => {
         // trạng thái "user đã bật SponsorBlock nhưng panel hiện thu gọn, nhìn
         // như tính năng biến mất" gây khó hiểu ở lần mở panel tiếp theo.
         if (anyAdvancedOn && advWrap) advWrap.classList.add('vtv-adv-open');
+
+        // Nếu watchParty đã bật sẵn từ trước (reload trang khi đang bật), hiện
+        // room panel ngay — không cần đợi user tự toggle lại mới thấy.
+        if (_flags.watchParty) {
+            const roomPanel = document.getElementById('vtv-room-panel');
+            if (roomPanel) { roomPanel.style.display = 'flex'; _renderRoomPanel(); }
+        }
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────

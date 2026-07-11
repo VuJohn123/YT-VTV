@@ -180,12 +180,22 @@ function parsePublishedAge(text) {
 }
 
 /**
- * So sánh hai video (cùng episode) để xác định cái nào MỚI hơn (ưu tiên upload sau).
- * Ưu tiên: publishedText (nếu có ở cả 2) > _seq (thứ tự trong playlist, lớn hơn = mới hơn
- * theo giả định phổ biến playlist append theo thời gian) > giữ nguyên thứ tự gốc.
- * @returns {number} âm nếu a cũ hơn b, dương nếu a mới hơn b, 0 nếu không xác định được
+ * So sánh hai video (cùng episode) để xác định cái nào ĐÁNG ƯU TIÊN hơn khi
+ * cần chọn 1 trong nhiều bản trùng. Thứ tự ưu tiên:
+ *   1. Duration classification: 'full' > 'unknown' > 'segment' — 1 tập ĐẦY ĐỦ
+ *      (50p-1h30) luôn đáng tin hơn 1 đoạn ngắn 3-6 phút (khả năng cao là
+ *      trailer/preview/1 phần bị chia nhỏ), bất kể ngày đăng cái nào mới hơn.
+ *   2. publishedText (nếu có ở cả 2, cùng hạng duration) — mới hơn thắng.
+ *   3. _seq (thứ tự trong playlist, lớn hơn = mới hơn theo giả định phổ biến
+ *      playlist append theo thời gian).
+ * @returns {number} dương nếu a đáng ưu tiên hơn b, âm nếu ngược lại, 0 nếu hoà
  */
 function compareVideoRecency(a, b) {
+    const da = classifyDuration(parseDurationText(a.lengthText));
+    const db = classifyDuration(parseDurationText(b.lengthText));
+    const RANK = { full: 2, unknown: 1, segment: 0 };
+    if (RANK[da] !== RANK[db]) return RANK[da] - RANK[db];
+
     const ta = parsePublishedAge(a.publishedText);
     const tb = parsePublishedAge(b.publishedText);
     if (ta !== null && tb !== null) return ta - tb; // timestamp lớn hơn = mới hơn
@@ -193,6 +203,43 @@ function compareVideoRecency(a, b) {
     if (typeof a._seq === 'number' && typeof b._seq === 'number') return a._seq - b._seq;
 
     return 0;
+}
+
+
+/**
+ * Parse YouTube's lengthText ("5:23", "52:30", "1:23:45") thành tổng số giây.
+ * @param {string} text
+ * @returns {number|null} số giây, hoặc null nếu không parse được
+ */
+function parseDurationText(text) {
+    if (!text) return null;
+    const parts = text.trim().split(':').map(n => parseInt(n, 10));
+    if (parts.some(isNaN)) return null;
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 1) return parts[0];
+    return null;
+}
+
+// Ngưỡng phân loại thời lượng — dựa trên format phim truyền hình Việt Nam
+// phổ biến: tập full thường 50 phút - 1h30, còn các video ngắn (trailer,
+// preview, hoặc segment 1/4 2/4...) thường chỉ 3-5 phút.
+const DURATION_FULL_MIN_S    = 50 * 60;   // 50 phút
+const DURATION_FULL_MAX_S    = 90 * 60;   // 1h30
+const DURATION_SEGMENT_MAX_S = 6 * 60;    // 6 phút (nới nhẹ so với 5p để dung sai)
+
+/**
+ * Phân loại 1 video theo thời lượng: 'full' (tập đầy đủ, ưu tiên cao nhất),
+ * 'segment' (đoạn ngắn — có thể là 1 phần của tập bị chia nhỏ 1/4, 2/4...),
+ * hoặc 'unknown' (không xác định — không loại trừ, chỉ không có tín hiệu rõ).
+ * @param {number|null} seconds
+ * @returns {'full'|'segment'|'unknown'}
+ */
+function classifyDuration(seconds) {
+    if (seconds === null) return 'unknown';
+    if (seconds >= DURATION_FULL_MIN_S && seconds <= DURATION_FULL_MAX_S) return 'full';
+    if (seconds > 0 && seconds <= DURATION_SEGMENT_MAX_S) return 'segment';
+    return 'unknown';
 }
 
 

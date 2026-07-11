@@ -2,8 +2,8 @@
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
 // @icon         https://yt3.ggpht.com/vs_RBzRO4Z-OoX2arjzu1A7e7g_RpAMLRXVVkRf07rh1DVaSWNf1HcuSj2MP6v3dsbEtnTgqOZc=s48-c-k-c0x00ffffff-no-rj
-// @version      12.0
-// @description  Tự động điều hướng tập phim VTV Giải Trí — kiến trúc layered event-driven, SPA-native navigation, internal PlayerControl layer, SponsorBlock, Watch Party, Chapter Detection
+// @version      13.0
+// @description  Tự động điều hướng tập phim VTV Giải Trí — SPA-native navigation, Watch Party đa máy (WebRTC), duration-aware episode search, SponsorBlock, Chapter Detection
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -16,6 +16,8 @@
 // @grant        unsafeWindow
 // @grant        GM_xmlhttpRequest
 // @connect      sponsor.ajay.app
+// @connect      0.peerjs.com
+// @connect      stun.l.google.com
 //
 // Load order is explicit and maps to the dependency graph:
 // Layer 0/1 — pure utilities, no dependencies
@@ -32,6 +34,7 @@
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/player-control.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/sponsor-block.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/watch-party.js
+// @require      https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/chapter-detector.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/buffer-monitor.js
 // Layer 3 — UI + features (depend on Layer 0-2)

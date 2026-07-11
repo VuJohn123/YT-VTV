@@ -24,6 +24,8 @@
     if (_initFlags.voiceEnabled) VoiceControl.start();
     if (_initFlags.pipEnabled)   AutoPiP.enable();
     if (_initFlags.audioMode)    AudioMode.enable();
+    if (_initFlags.watchParty)   WatchParty.enable();
+    if (_initFlags.chapterDetect) ChapterDetector.enable();
 
     // ─── Global EventBus wires (registered once) ──────────────────────────────
 

@@ -5,9 +5,15 @@
 //   3. findNext/findPrev ưu tiên list cache, fallback search với fuzzy match
 //   4. Không re-search nếu đã có hit trong cache
 //   5. Dedup video trùng tập (nhiều bản upload style title khác nhau cho cùng
-//      1 tập thật) — giữ bản đăng MỚI NHẤT theo publishedTimeText, so khớp
-//      season kiểu fuzzy (null = wildcard) để không tách nhầm 1 tập thật
-//      thành 2 tập ảo chỉ vì cách ghi "phần mấy" khác nhau giữa các title.
+//      1 tập thật) — giữ bản đáng tin cậy nhất theo classifyDuration (full >
+//      unknown > segment) rồi mới tới publishedTimeText, so khớp season kiểu
+//      fuzzy (null = wildcard) để không tách nhầm 1 tập thật thành 2 tập ảo
+//      chỉ vì cách ghi "phần mấy" khác nhau giữa các title.
+//   6. Duration-aware: video 50p-1h30 coi là "full", 3-6p coi là "segment"
+//      (nhiều khả năng chỉ là 1 phần bị chia nhỏ như 1/4, 2/4 — không phải
+//      lỗi, style title cũ hay chia tập dài thành nhiều video ngắn), giúp
+//      chọn đúng bản đầy đủ khi có nhiều video trùng tập với thời lượng khác
+//      nhau (xem compareVideoRecency trong utils.js).
 
 const EpisodeEngine = (() => {
     // ─── Per-series episode list cache (in-memory, session) ───────────────────
@@ -83,6 +89,7 @@ const EpisodeEngine = (() => {
             const entry = {
                 videoId, episode, season, title, url, isCurrent, segment, totalSeg,
                 publishedText: meta.publishedText || '',
+                lengthText: meta.lengthText || '',
                 _seq: typeof meta._seq === 'number' ? meta._seq : undefined,
             };
 
@@ -141,7 +148,7 @@ const EpisodeEngine = (() => {
                     v.url || `https://youtu.be/${v.videoId}`,
                     false,
                     p.segment || 0, p.totalSeg || 1,
-                    { publishedText: v.publishedText, _seq: v._seq }
+                    { publishedText: v.publishedText, lengthText: v.lengthText, _seq: v._seq }
                 );
             }
         };

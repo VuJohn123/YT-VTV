@@ -58,7 +58,8 @@ const Search = (() => {
                         const title   = vr.title?.runs?.[0]?.text || '';
                         const videoId = vr.videoId;
                         const publishedText = vr.publishedTimeText?.simpleText || '';
-                        if (title && videoId) vids.push({ title, videoId, publishedText });
+                        const lengthText = vr.lengthText?.simpleText || '';
+                        if (title && videoId) vids.push({ title, videoId, publishedText, lengthText });
                     }
                 }
             }
