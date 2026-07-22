@@ -32,7 +32,7 @@ const EpisodeEngine = (() => {
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
-    function _seriesMatch(parsed, info) {
+    function _seriesMatch(parsed, info, description, seriesKey) {
         if (!parsed?.episode) return false;
         // Loose series match: normalized lowercase, allow partial
         const a = (parsed.series || '').toLowerCase().trim();
@@ -47,6 +47,19 @@ const EpisodeEngine = (() => {
             if (a[i] === b[i]) common++; else break;
         }
         if (common >= 6) return true;
+
+        // Fallback: string match thất bại hoàn toàn (title viết khác hẳn,
+        // không có phần chung nào) — thử dùng SeriesLearner (tần suất tên
+        // nhân vật đã học từ description các tập trước của series này).
+        // Chỉ tin khi confidence > 50% (hơn nửa số từ đặc trưng khớp), để
+        // tránh false positive từ 1-2 từ trùng ngẫu nhiên.
+        if (description && seriesKey) {
+            const confidence = SeriesLearner.confidenceScore(seriesKey, description);
+            if (confidence > 0.5) {
+                log('[EpisodeEngine] series match qua description (confidence', confidence.toFixed(2) + '):', parsed.series);
+                return true;
+            }
+        }
         return false;
     }
 
@@ -140,8 +153,19 @@ const EpisodeEngine = (() => {
                 if (!v.videoId) continue;
                 const p = parseTitle(v.title || '');
                 if (!p.episode) continue;
-                if (!_seriesMatch(p, info)) continue;
+
+                // Kiểm tra match qua string TRƯỚC (không dùng description) để
+                // biết đây có phải "match chắc chắn" hay "match qua learner" —
+                // chỉ học từ description của video match CHẮC CHẮN, tránh vòng
+                // lặp tự củng cố (nếu học từ video match nhờ chính learner, sai
+                // sót ban đầu sẽ tự khuếch đại qua thời gian).
+                const strictMatch = _seriesMatch(p, info);
+                const matched = strictMatch || _seriesMatch(p, info, v.description, seriesKey);
+                if (!matched) continue;
                 if (!_seasonMatch(p, info)) continue;
+
+                if (strictMatch && v.description) SeriesLearner.learn(seriesKey, v.description);
+
                 _add(
                     v.videoId, p.episode, p.season,
                     v.title,

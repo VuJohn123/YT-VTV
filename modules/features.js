@@ -83,6 +83,7 @@ const AudioMode = (() => {
     let _overlay     = null;
     let _prevQuality = null;   // e.g. 'hd1080', 'hd720', 'large', 'medium', 'small', 'tiny', 'auto'
     let _active      = false;
+    let _styleTag    = null;
 
     // ── Overlay ────────────────────────────────────────────────────────────
     function _initOverlay() {
@@ -103,6 +104,56 @@ const AudioMode = (() => {
         }
     }
 
+    // "TRULY" audio mode — tiết kiệm tài nguyên THẬT SỰ, không chỉ ẩn bằng
+    // opacity. GIỚI HẠN THẬT CẦN BIẾT: trình duyệt KHÔNG có API chuẩn nào để
+    // tắt hẳn việc decode video track khi <video> vẫn đang play — đây là giới
+    // hạn cứng của HTML5 media pipeline (network requests cho video segments
+    // trong adaptive streaming HLS/DASH vẫn xảy ra, JS không override được).
+    // Những gì làm được và ĐÃ áp dụng ở đây:
+    //   1. visibility:hidden + kích thước 1x1px thay vì chỉ opacity:0 — Chrome
+    //      compositor thực sự loại bỏ video khỏi paint/composite layer khi ẩn
+    //      đúng cách này, tiết kiệm GPU đáng kể so với chỉ set opacity (vẫn
+    //      giữ nguyên compositing layer dù không nhìn thấy).
+    //   2. Quality thấp nhất — giảm bitrate video track cần decode/tải, dù
+    //      không tắt hẳn (xem PlayerControl.getLowestQuality()).
+    //   3. Tắt CSS animation/transition toàn trang qua injected <style> — một
+    //      số theme/overlay của YouTube có animation chạy nền tốn CPU dù
+    //      không liên quan trực tiếp tới video.
+    function _injectPerfCSS() {
+        if (_styleTag) return;
+        _styleTag = document.createElement('style');
+        _styleTag.id = 'vtv-audio-mode-perf-css';
+        _styleTag.textContent = `
+            /* Tắt mọi animation/transition khi Audio Mode bật — giảm CPU cho
+               việc paint lại các hiệu ứng không cần thiết khi không xem hình. */
+            ytd-app *, ytd-app *::before, ytd-app *::after {
+                animation-play-state: paused !important;
+                transition: none !important;
+            }
+            /* Class do CHÍNH SCRIPT gán trực tiếp lên element mà
+               VideoContext.getVideoEl() trả về (nguồn đáng tin cậy duy nhất
+               — không đoán selector nội bộ của YouTube, có thể sai hoặc đổi
+               giữa các version). !important vì YouTube's internal player có
+               thể tự resize <video> qua ResizeObserver khi container đổi kích
+               thước (fullscreen toggle, resize window...), có thể ghi đè lại
+               inline style nếu không dùng !important. */
+            video.vtv-audio-mode-hidden {
+                visibility: hidden !important;
+                width: 1px !important;
+                height: 1px !important;
+            }
+        `;
+        document.head.appendChild(_styleTag);
+    }
+    function _removePerfCSS() {
+        if (_styleTag) { _styleTag.remove(); _styleTag = null; }
+    }
+
+    function _applyHiddenClass() {
+        const v = VideoContext.getVideoEl();
+        if (v && _active) v.classList.add('vtv-audio-mode-hidden');
+    }
+
     function enable() {
         if (_active) return;
         _active = true;
@@ -118,10 +169,15 @@ const AudioMode = (() => {
 
         _initOverlay();
         if (_overlay) _overlay.style.display = 'block';
-        const v = VideoContext.getVideoEl();
-        if (v) v.style.opacity = '0';
 
-        log('[AudioMode] enabled, quality:', lowest, '(was:', _prevQuality, ')');
+        _injectPerfCSS();
+        _applyHiddenClass();
+        // Video element có thể đổi khi chuyển tập (SPA nav) — re-apply class
+        // ẩn cho element MỚI mỗi lần videoReady fire, tương tự pattern đã
+        // dùng ở WatchParty/BufferMonitor cho cùng vấn đề.
+        EventBus.on('videoReady', _applyHiddenClass);
+
+        log('[AudioMode] TRULY enabled — quality:', lowest, ', video compositing thực sự bị loại bỏ (không chỉ opacity:0)');
     }
 
     function disable() {
@@ -140,8 +196,13 @@ const AudioMode = (() => {
         _prevQuality = null;
 
         if (_overlay) _overlay.style.display = 'none';
+
+        // Xoá class ẩn khỏi video HIỆN TẠI (nếu còn tồn tại — có thể null
+        // nếu đang giữa 2 lần chuyển tập).
         const v = VideoContext.getVideoEl();
-        if (v) v.style.opacity = '';
+        if (v) v.classList.remove('vtv-audio-mode-hidden');
+
+        _removePerfCSS();
 
         log('[AudioMode] disabled, restored quality to:', restoreTo);
     }

@@ -48,6 +48,20 @@
         if (window._vtvSeriesKey && window._vtvParsedInfo?.episode)
             Storage.addStats(window._vtvSeriesKey, window._vtvParsedInfo.episode, duration);
 
+        // TV Mode: nếu đang kết nối với 1 TV, tự động phát video hiện tại
+        // trên TV luôn — đúng chuẩn episode (TV luôn theo sát tập đang xem
+        // trong trình duyệt, không cần user tự thao tác lại trên TV).
+        if (TvMode.isConnected()) {
+            const videoId = new URLSearchParams(location.search).get('v');
+            const v = VideoContext.getVideoEl();
+            if (videoId) {
+                TvMode.playVideo(videoId, v?.currentTime || 0).catch(err => {
+                    warn('[TvMode] Không sync được tập lên TV:', err.message);
+                    EventBus.emit('voiceLabel', { text: '📺 Lỗi đồng bộ TV: ' + err.message });
+                });
+            }
+        }
+
         // Continue-where-left-off: nếu có vị trí dở của TẬP KHÁC (không phải
         // tập đang mở), hỏi user có muốn xem nốt tập đó không. Chỉ hỏi 1 lần
         // mỗi lần vào trang (không lặp lại hỏi mỗi khi videoReady fire lại).
@@ -136,12 +150,13 @@
             UI.showSearching();
 
             // 1. Resolve channel — pass videoId for per-video dedup
-            const videoId     = new URLSearchParams(location.search).get('v') || '';
-            const channelName = await ChannelDetect.resolve(videoId);
+            const videoId = new URLSearchParams(location.search).get('v') || '';
+            const channel = await ChannelDetect.resolve(videoId); // {name, id}
             if (_stale()) return; // navigation mới đã xảy ra trong lúc await
-            EventBus.emit('channelReady', { channelName });
+            const channelName = channel.name;
+            EventBus.emit('channelReady', { channelName, channelId: channel.id });
 
-            if (!isVTVChannel(channelName)) {
+            if (!isVTVChannel(channelName, channel.id)) {
                 UI.showWrongChannel(channelName);
                 return;
             }

@@ -357,6 +357,7 @@ const UI = (() => {
                         <div id="vtv-adv-inner">
                             <div id="vtv-toggles-adv"></div>
                             <div id="vtv-room-panel" style="display:none"></div>
+                            <div id="vtv-tv-panel" style="display:none"></div>
                         </div>
                     </div>
                     <div id="vtv-warnings"></div>
@@ -479,6 +480,7 @@ const UI = (() => {
         { id: 'tog-sb',       flag: 'sponsorBlock', gm: 'sponsorBlock', icon: '🚫', label: 'Skip Sponsor', advanced: true },
         { id: 'tog-wp',       flag: 'watchParty',   gm: 'watchParty', icon: '🔗', label: 'Sync tab (cùng máy)', advanced: true }, // Chỉ đồng bộ giữa các tab CÙNG máy/CÙNG trình duyệt qua BroadcastChannel — KHÔNG phải xem chung qua mạng với người khác (khác Teleparty/Discord). Đổi label cho rõ, tránh hiểu lầm.
         { id: 'tog-chap',     flag: 'chapterDetect', gm: 'chapterDetect', icon: '📑', label: 'Chapters', advanced: true },
+        { id: 'tog-tv',       flag: 'tvMode',       gm: 'tvMode',      icon: '📺', label: 'TV Mode', advanced: true },
     ];
 
     /**
@@ -487,6 +489,52 @@ const UI = (() => {
      * 2. Đang tạo/kết nối (loading) — disable nút, hiện "Đang kết nối..."
      * 3. Đã trong phòng — hiện room code lớn (bấm để copy) + số người + nút Rời
      */
+    /**
+     * Render TV Mode panel — kết nối YouTube trên TV qua Lounge API.
+     * 2 trạng thái: chưa kết nối (nhập mã ghép nối 12 số) / đã kết nối
+     * (hiện tên TV + nút ngắt).
+     */
+    function _renderTvPanel() {
+        const el = document.getElementById('vtv-tv-panel');
+        if (!el) return;
+
+        if (TvMode.isConnected()) {
+            el.innerHTML = `
+                <div class="vtv-room-status">📺 Đã kết nối: <b>${TvMode.getScreenName() || 'TV'}</b></div>
+                <button class="vtv-room-btn" id="vtv-tv-disconnect-btn">Ngắt kết nối</button>`;
+            document.getElementById('vtv-tv-disconnect-btn')?.addEventListener('click', async () => {
+                await TvMode.disconnect();
+                _renderTvPanel();
+            });
+            return;
+        }
+
+        el.innerHTML = `
+            <div class="vtv-room-status">Trên TV: Cài đặt → "Liên kết bằng mã TV" để hiện mã 12 số</div>
+            <div class="vtv-room-row">
+                <input class="vtv-room-input" id="vtv-tv-code-input" placeholder="123456789012" maxlength="14">
+                <button class="vtv-room-btn" id="vtv-tv-connect-btn">Kết nối</button>
+            </div>
+            <div class="vtv-room-status" id="vtv-tv-msg"></div>`;
+
+        const msgEl = document.getElementById('vtv-tv-msg');
+        document.getElementById('vtv-tv-connect-btn')?.addEventListener('click', async (e) => {
+            const code = document.getElementById('vtv-tv-code-input')?.value?.trim();
+            if (!code) { msgEl.textContent = '❌ Nhập mã ghép nối'; return; }
+            e.target.disabled = true;
+            msgEl.textContent = 'Đang ghép nối...';
+            try {
+                const info = await TvMode.pairWithCode(code);
+                msgEl.textContent = `Đã tìm thấy "${info.name}", đang kết nối...`;
+                await TvMode.connect();
+                _renderTvPanel();
+            } catch (err) {
+                msgEl.textContent = '❌ ' + (err.message || 'Lỗi kết nối TV');
+                e.target.disabled = false;
+            }
+        });
+    }
+
     function _renderRoomPanel() {
         const el = document.getElementById('vtv-room-panel');
         if (!el) return;
@@ -599,6 +647,14 @@ const UI = (() => {
                     }
                 }
                 if (def.flag === 'chapterDetect') val ? ChapterDetector.enable() : ChapterDetector.disable();
+                if (def.flag === 'tvMode') {
+                    const tvPanel = document.getElementById('vtv-tv-panel');
+                    if (tvPanel) {
+                        tvPanel.style.display = val ? 'flex' : 'none';
+                        if (val) _renderTvPanel();
+                        else if (TvMode.isConnected()) TvMode.disconnect(); // tắt toggle = ngắt kết nối luôn, tránh treo phiên vô ích
+                    }
+                }
             });
             (def.advanced ? gridAdv : grid).appendChild(tog);
         }

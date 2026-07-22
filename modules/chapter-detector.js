@@ -67,17 +67,9 @@ const ChapterDetector = (() => {
         EventBus.emit('chapterDetected', { chapters: _chapters.slice() });
     }
 
-    /**
-     * Bật phân tích cho video hiện tại. An toàn để gọi nhiều lần — tự kiểm
-     * tra element đã có source chưa trước khi tạo mới.
-     */
-    function enable() {
+    function _setupForCurrentVideo() {
         const v = VideoContext.getVideoEl();
-        if (!v) return false;
-
-        _enabled = true;
-        _chapters = [];
-        _silenceStart = null;
+        if (!v || !_enabled) return false;
 
         try {
             if (!_ctx) _ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -96,7 +88,7 @@ const ChapterDetector = (() => {
                 // đã bị Web Audio API "cướp" khỏi luồng mặc định của <video>.
                 source.connect(_ctx.destination);
             }
-            // else: element này ĐÃ có source từ lần enable() trước (ví dụ user
+            // else: element này ĐÃ có source từ lần setup trước (ví dụ user
             // tắt rồi bật lại tính năng mà không đổi tập) — dùng lại, KHÔNG
             // được gọi createMediaElementSource() lần 2 (sẽ throw).
 
@@ -110,9 +102,29 @@ const ChapterDetector = (() => {
             return true;
         } catch (e) {
             warn('[ChapterDetector] Không thể khởi tạo Web Audio API:', e);
-            _enabled = false;
             return false;
         }
+    }
+
+    /**
+     * Bật phân tích cho video hiện tại. An toàn để gọi nhiều lần — tự kiểm
+     * tra element đã có source chưa trước khi tạo mới.
+     */
+    function enable() {
+        _enabled = true;
+        _chapters = [];
+        _silenceStart = null;
+
+        const ok = _setupForCurrentVideo();
+        // Re-setup mỗi khi video element mới sẵn sàng (SPA nav sang tập khác
+        // tạo/thay <video> element) — nếu không, _analyser vẫn gắn với element
+        // CŨ đã detach, phân tích sai/không phân tích gì cả cho tập mới. Đây
+        // là lỗi "chưa thực sự SPA-aware" — quan trọng vì đây là 1 trong các
+        // module dễ bị bỏ sót khi tổng rà soát tính SPA-aware của cả project.
+        EventBus.on('videoReady', () => { _chapters = []; _silenceStart = null; _setupForCurrentVideo(); });
+
+        if (!ok) _enabled = false;
+        return ok;
     }
 
     function disable() {

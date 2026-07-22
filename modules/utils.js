@@ -3,18 +3,48 @@
 
 // ─── VTV Channel family (similarity-based, không cần exact match) ─────────────
 // Thêm kênh mới: chỉ cần thêm vào list, hệ thống tự so sánh.
+//
+// QUAN TRỌNG: danh sách này KHÔNG đầy đủ 100% (không có API chính thức để
+// enumerate "mọi kênh thuộc VTV" — VTV không công khai danh sách kênh con
+// chính thức). Đây là danh sách best-effort dựa trên các kênh phổ biến nhất
+// đã xác nhận qua tìm kiếm công khai. Nếu 1 kênh VTV hợp lệ nào đó không có
+// trong list, script sẽ coi nó là "sai kênh" — false negative, không phải
+// false positive, nên an toàn hơn là thêm nhầm kênh giả mạo.
 const VTV_CHANNEL_PATTERNS = [
-    /^VTV\b/i,                          // VTV Giải Trí, VTV Hài, VTV Go, VTV2...
+    /^VTV\b/i,                          // VTV Giải Trí, VTV Hài, VTV Go, VTV1, VTV2...
     /vtv\s*giải\s*trí/i,
     /vtv\s*hài/i,
-    /vtv\s*go/i,
+    /vtv\s*go\b/i,
     /vtv\s*cab/i,
     /vtv\s*digital/i,
     /vtv\s*news/i,
     /vtv\s*tuyển\s*chọn/i,
     /vtv\s*phim/i,
+    /vtv\s*shows?\b/i,
     /vtv\s*[0-9]/i,
+    /ấn\s*tượng\s*vtv/i,
+    // Các kênh sản xuất/phân phối nội dung chính thức của VTV — KHÔNG có chữ
+    // "VTV" trong tên nhưng vẫn thuộc VTV-family (xác nhận qua mô tả kênh
+    // công khai trên YouTube). Quan trọng nhất: VFC Official — trung tâm sản
+    // xuất phim truyền hình, phần lớn phim VTV Giải Trí thực ra upload gốc
+    // từ kênh này trước khi được re-upload sang VTV Giải Trí Official. Đây
+    // là bug thật xác nhận qua log của user: kênh "VFC Official" không match
+    // bất kỳ pattern nào trước khi mở rộng list này.
+    /^vfc\s*official/i,
+    /^phim\s*truyền\s*hình\s*việt\s*nam$/i,
 ];
+
+// Channel ID whitelist — mạnh hơn regex tên (tên hiển thị CÓ THỂ đổi hoặc bị
+// giả mạo bởi kênh khác đặt tên giống hệt, nhưng channel ID là duy nhất và
+// không đổi được). Dùng làm lớp xác thực BỔ SUNG khi có sẵn channel ID trong
+// dữ liệu (ví dụ từ ytInitialPlayerResponse.videoDetails.channelId) — không
+// thay thế hoàn toàn regex vì không phải lúc nào cũng lấy được ID kịp thời.
+const VTV_CHANNEL_IDS = new Set([
+    'UCRLKY3loGMTmFLGO0BWQVeg',  // VTV1
+    'UCfxbE4_BAlry2GFoNLDXPRA',  // VTV Go
+    'UClpDH7RTC9kEK96DEQDUnfQ',  // Phim Truyền Hình Việt Nam
+    'UCevx3UR91JjIpjD6eYW_2MA',  // Ấn tượng VTV
+]);
 
 // Canonical channel cho search queries — luôn dùng cái này khi build query
 const SEARCH_CHANNEL_HINT = 'VTV Giải Trí';
@@ -32,9 +62,13 @@ const warn = (...a) => DEBUG && console.warn('[VTV]', ...a);
 // ─── Channel matcher ─────────────────────────────────────────────────────────
 /**
  * @param {string} channelName
+ * @param {string} [channelId] - nếu có, kiểm tra thêm qua whitelist ID (đáng
+ *   tin cậy hơn tên hiển thị vì ID không đổi/không giả mạo được, nhưng không
+ *   phải lúc nào cũng có sẵn kịp thời nên vẫn cần regex tên làm chính).
  * @returns {boolean}
  */
-function isVTVChannel(channelName) {
+function isVTVChannel(channelName, channelId) {
+    if (channelId && VTV_CHANNEL_IDS.has(channelId)) return true;
     if (!channelName) return false;
     return VTV_CHANNEL_PATTERNS.some(p => p.test(channelName));
 }

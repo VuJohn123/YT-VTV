@@ -1,9 +1,13 @@
 // channel-detect.js — Layer 1: Resolve channel per video navigation
 // Key fix: YouTube SPA không reload page → phải re-resolve channel per navigate,
 // không cache theo URL vì cùng URL có thể render kênh khác sau SPA nav.
+//
+// TĂNG CƯỜNG: giờ trả về cả channelId (không chỉ channelName) để
+// isVTVChannel() có thể xác thực qua ID — đáng tin cậy hơn tên hiển thị (tên
+// có thể bị kênh giả mạo đặt giống hệt, ID thì không đổi/không giả mạo được).
 
 const ChannelDetect = (() => {
-    // Per-video cache: videoId → channelName (tránh re-resolve cùng video)
+    // Per-video cache: videoId → {name, id} (tránh re-resolve cùng video)
     const _cache = new Map();
 
     async function _waitForOwner() {
@@ -13,7 +17,8 @@ const ChannelDetect = (() => {
     function _fromPlayerResponse(win) {
         try {
             const p = win.ytInitialPlayerResponse ?? win.ytplayer?.config?.args?.raw_player_response;
-            if (p?.videoDetails?.author) return p.videoDetails.author;
+            const details = p?.videoDetails;
+            if (details?.author) return { name: details.author, id: details.channelId || null };
         } catch (e) {}
         return null;
     }
@@ -30,7 +35,11 @@ const ChannelDetect = (() => {
                 ]) {
                     const el = root.querySelector(sel);
                     const t  = el?.textContent?.trim();
-                    if (t && t.length > 1) return t;
+                    if (t && t.length > 1) {
+                        const href = el.getAttribute('href') || '';
+                        const idMatch = href.match(/\/channel\/(UC[\w-]+)/);
+                        return { name: t, id: idMatch?.[1] || null };
+                    }
                 }
             }
         }
@@ -42,35 +51,35 @@ const ChannelDetect = (() => {
         ]) {
             const el = document.querySelector(sel);
             const t  = el?.textContent?.trim();
-            if (t && t.length > 1) return t;
+            if (t && t.length > 1) {
+                const href = el.getAttribute('href') || '';
+                const idMatch = href.match(/\/channel\/(UC[\w-]+)/);
+                return { name: t, id: idMatch?.[1] || null };
+            }
         }
         return null;
     }
 
     /**
-     * Resolve channel name for the current video.
+     * Resolve channel cho video hiện tại.
      * Must be called after each yt-navigate-finish, not cached across navigations.
      * @param {string} videoId — current video ID (used for per-video dedup only)
-     * @returns {Promise<string>}
+     * @returns {Promise<{name:string, id:string|null}>}
      */
     async function resolve(videoId) {
-        // Per-video cache hit (same video re-queried in same page session)
         if (videoId && _cache.has(videoId)) return _cache.get(videoId);
 
         const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window);
 
         await _waitForOwner();
 
-        // Try playerResponse first (available immediately after nav)
         const fast = _fromPlayerResponse(win);
         if (fast) {
             if (videoId) _cache.set(videoId, fast);
             return fast;
         }
 
-        // Poll DOM — YouTube renders owner async after SPA nav
         for (let i = 0; i < 50; i++) {
-            // Re-check playerResponse each tick (it populates async)
             const pr = _fromPlayerResponse(win);
             if (pr) { if (videoId) _cache.set(videoId, pr); return pr; }
 
@@ -79,7 +88,7 @@ const ChannelDetect = (() => {
 
             await new Promise(r => setTimeout(r, 300));
         }
-        return '';
+        return { name: '', id: null };
     }
 
     /** Clear cache on full page reload (called by entry.js on beforeunload) */

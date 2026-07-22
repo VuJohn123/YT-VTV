@@ -209,6 +209,20 @@ const Storage = (() => {
         );
     }
 
+    // ─── Series learner data (thống kê từ đặc trưng học được từ description) ──
+    // Không có TTL — dữ liệu học càng lâu càng chính xác, không nên tự hết hạn
+    // như cache thông thường (khác VirtualPlaylist cache vốn cần refresh định kỳ
+    // vì danh sách tập có thể thay đổi).
+    function getLearnedData(seriesKey) {
+        const raw = GM_getValue('vtvUlt_learn_' + seriesKey.replace(/\s+/g, '_'), null);
+        if (!raw) return null;
+        try { return JSON.parse(raw); } catch (e) { return null; }
+    }
+
+    function saveLearnedData(seriesKey, data) {
+        GM_setValue('vtvUlt_learn_' + seriesKey.replace(/\s+/g, '_'), JSON.stringify(data));
+    }
+
     // ─── UI prefs ─────────────────────────────────────────────────────────────
     function getUIPrefs() {
         return {
@@ -237,6 +251,7 @@ const Storage = (() => {
             sponsorBlock: getGlobal('sponsorBlock', false),
             watchParty:   getGlobal('watchParty', false),
             chapterDetect: getGlobal('chapterDetect', false),
+            tvMode:        getGlobal('tvMode', false),
         };
     }
 
@@ -254,6 +269,7 @@ const Storage = (() => {
         addToWatchLater, getWatchLater,
         getNotes, addNote,
         getVirtualPlaylistCache, saveVirtualPlaylistCache,
+        getLearnedData, saveLearnedData,
         getUIPrefs, saveUIPrefs,
         getFeatureFlags, saveFlag,
     };

@@ -29,6 +29,7 @@
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/channel-detect.js
 // Layer 2 — core services (depend on Layer 0/1)
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/virtual-playlist.js
+// @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/series-learner.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/episode-navigator.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/video-context.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/player-control.js
@@ -37,6 +38,7 @@
 // @require      https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/chapter-detector.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/buffer-monitor.js
+// @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/tv-mode.js
 // Layer 3 — UI + features (depend on Layer 0-2)
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/ui.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/features.js
