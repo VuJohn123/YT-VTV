@@ -32,6 +32,10 @@ const WatchParty = (() => {
     let _applyingRemote = false;
     let _lastBroadcastAt = 0;
     let _attachedVideoEl = null;
+    // Mặc định KHÔNG tự chuyển tập theo nhau (an toàn hơn — mỗi tab/máy độc
+    // lập chọn video riêng). User phải chủ động bật setFollowNav(true) mới
+    // có hành vi "1 tab chuyển tập, các tab khác trong phòng tự chuyển theo".
+    let _followNav      = false;
 
     function _currentVideoId() { return new URLSearchParams(location.search).get('v') || ''; }
 
@@ -177,6 +181,19 @@ const WatchParty = (() => {
     function _handleIncoming(msg) {
         const { type, payload, videoId, from } = msg || {};
         if (!type || from === _instanceId) return; // tự gửi tự nhận
+
+        // 'nav' là loại message DUY NHẤT không cần videoId khớp trước — chính
+        // nó dùng để đồng bộ videoId giữa các tab/máy (đây là câu trả lời cho
+        // "sync tab kéo nhau kiểu gì": khi 1 tab chuyển tập, nó broadcast 'nav'
+        // kèm URL đích, các tab khác trong phòng tự Navigator.goTo() theo).
+        if (type === 'nav') {
+            if (!payload?.url || !_followNav) return; // chỉ tự chuyển nếu user đã bật tuỳ chọn "theo nhau"
+            _applyingRemote = true;
+            Navigator.goTo(payload.url);
+            setTimeout(() => { _applyingRemote = false; }, 500); // navigation cần nhiều thời gian hơn play/pause/seek để hoàn tất
+            return;
+        }
+
         if (videoId !== _currentVideoId()) return; // phía kia đang xem video khác, không đồng bộ nhầm
 
         const v = VideoContext.getVideoEl();
@@ -219,6 +236,16 @@ const WatchParty = (() => {
         // tạo/thay <video> element — listener cũ đã bị detach cùng element cũ,
         // không tự động chuyển sang element mới nếu không lắng nghe event này).
         EventBus.on('videoReady', _attachVideoListeners);
+        // Broadcast 'nav' mỗi khi video mới sẵn sàng — đây là tín hiệu cho
+        // các tab/máy khác trong phòng biết URL đích để tự chuyển theo (nếu
+        // họ đã bật _followNav). Không broadcast khi _applyingRemote=true —
+        // tránh vòng lặp (chính navigation này là do NHẬN lệnh nav từ nơi
+        // khác, không phải do user tự chuyển tập).
+        EventBus.on('videoReady', () => {
+            if (_applyingRemote) return;
+            _localSend({ type: 'nav', payload: { url: location.href }, from: _instanceId, ts: Date.now() });
+            _remoteBroadcast({ type: 'nav', payload: { url: location.href }, from: _instanceId, ts: Date.now() });
+        });
     }
 
     function disable() {
@@ -228,12 +255,21 @@ const WatchParty = (() => {
         _attachedVideoEl = null;
     }
 
+    /**
+     * Bật/tắt hành vi "tự chuyển tập theo nhau" — mặc định TẮT (an toàn).
+     * Khi bật, mỗi lần 1 tab/máy trong phòng chuyển sang video khác, mọi
+     * tab/máy khác trong phòng đã bật followNav sẽ tự Navigator.goTo() theo.
+     */
+    function setFollowNav(value) { _followNav = !!value; }
+    function getFollowNav() { return _followNav; }
+
     function isEnabled() { return _enabled; }
     function isLocalSupported()  { return typeof BroadcastChannel !== 'undefined'; }
     function isRemoteSupported() { return typeof Peer !== 'undefined' && typeof RTCPeerConnection !== 'undefined'; }
 
     return {
         enable, disable, isEnabled,
+        setFollowNav, getFollowNav,
         isLocalSupported, isRemoteSupported,
         createRoom, joinRoom, leaveRoom, getRoomInfo,
     };

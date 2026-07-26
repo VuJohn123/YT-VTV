@@ -222,15 +222,32 @@ const AutoPiP = (() => {
     let _enabled  = false;
     let _active   = false;
     let _interval = null;
+    let _attachedVideoEl = null;
 
     async function _check() {
         const v = VideoContext.getVideoEl();
         if (!v || !_enabled) return;
         if (document.hidden && !v.paused && !document.pictureInPictureElement) {
-            if (await PlayerControl.enterPiP()) _active = true;
+            await PlayerControl.enterPiP(); // _active được set qua event 'enterpictureinpicture', không set thủ công ở đây nữa
         } else if (!document.hidden && _active && document.pictureInPictureElement) {
-            if (await PlayerControl.exitPiP()) _active = false;
+            await PlayerControl.exitPiP(); // _active được clear qua event 'leavepictureinpicture'
         }
+    }
+
+    /**
+     * Lắng nghe enterpictureinpicture/leavepictureinpicture TRỰC TIẾP trên
+     * <video> element — theo đúng khuyến nghị chính thức của MDN để track
+     * trạng thái PiP chính xác, thay vì chỉ dựa vào polling interval. Quan
+     * trọng nhất: bắt được trường hợp user TỰ đóng PiP window bằng nút X
+     * (không qua code của script) — trước đây _active sẽ bị KẸT ở true dù
+     * PiP thực tế đã đóng, khiến lần _check() tiếp theo hiểu sai trạng thái.
+     */
+    function _attachPipEvents() {
+        const v = VideoContext.getVideoEl();
+        if (!v || v === _attachedVideoEl) return;
+        _attachedVideoEl = v;
+        v.addEventListener('enterpictureinpicture', () => { _active = true; });
+        v.addEventListener('leavepictureinpicture', () => { _active = false; });
     }
 
     function enable() {
@@ -239,7 +256,10 @@ const AutoPiP = (() => {
         Storage.saveFlag('pip', true);
         document.addEventListener('visibilitychange', _check);
         _interval = setInterval(_check, 2000);
-        log('[AutoPiP] enabled');
+        _attachPipEvents();
+        // Re-attach khi video element mới sẵn sàng (SPA nav sang tập khác).
+        EventBus.on('videoReady', _attachPipEvents);
+        log('[AutoPiP] enabled (event-driven, PIP chuẩn theo khuyến nghị MDN)');
     }
 
     function disable() {
@@ -332,39 +352,75 @@ const VoiceControl = (() => {
         _sr.lang            = 'vi-VN';
         _sr.continuous      = false;
         _sr.interimResults  = false;
-        _sr.maxAlternatives = 1;
+        _sr.maxAlternatives = 3; // thử nhiều lựa chọn nhận diện thay vì chỉ 1 — giảm tỷ lệ unrecognized khi audio bị nhiễu (mic bắt lẫn tiếng phim)
         _initialized = true;
 
         _sr.onresult = (e) => {
             if (!_recording) return;
-            let transcript = '';
+
+            // Gom TẤT CẢ alternatives của mỗi kết quả final, không chỉ [0]
+            // (alternative có độ tin cậy cao nhất theo Speech API, nhưng khi
+            // audio bị nhiễu — ví dụ tiếng phim lẫn vào mic — alternative đầu
+            // đôi khi sai còn alternative thứ 2-3 lại đúng ý user).
+            const alternatives = [];
             for (let i = e.resultIndex; i < e.results.length; i++) {
-                if (e.results[i].isFinal) transcript += e.results[i][0].transcript;
+                if (!e.results[i].isFinal) continue;
+                for (let j = 0; j < e.results[i].length; j++) {
+                    alternatives.push(e.results[i][j].transcript);
+                }
             }
-            transcript = transcript.toLowerCase().trim();
-            if (transcript && transcript.length < 80) {
-                log('[Voice] command:', transcript);
-                EventBus.emit('voiceLabel', { text: transcript });
-                _processCommand(transcript);
-                setTimeout(() => EventBus.emit('voiceLabel', { text: '' }), 1500);
-            }
+            if (!alternatives.length) return;
+
+            const primary = alternatives[0].toLowerCase().trim();
+            if (!primary || primary.length >= 80) return;
+
+            log('[Voice] command:', primary, alternatives.length > 1 ? `(+${alternatives.length - 1} alt)` : '');
+            EventBus.emit('voiceLabel', { text: primary });
+            _processCommand(primary, alternatives.slice(1));
+            setTimeout(() => EventBus.emit('voiceLabel', { text: '' }), 1500);
         };
         _sr.onerror = (e) => {
             _stopping = false;
             if (e.error === 'aborted' || e.error === 'no-speech') {
                 _recording = false;
+                _unduckAudio(); // khôi phục volume trước khi (có thể) retry, tránh duck chồng lấn
                 if (_pendingStart && _enabled) { _pendingStart = false; _startRecording(); }
                 return;
             }
             warn('[Voice] error:', e.error);
             EventBus.emit('voiceLabel', { text: 'Lỗi: ' + e.error });
             _recording = false;
+            _unduckAudio(); // lỗi khác cũng phải khôi phục volume — trước đây thiếu bước này khiến volume kẹt ở mức đã duck vĩnh viễn nếu lỗi xảy ra
         };
         _sr.onend = () => {
             _recording = _stopping = false;
+            _unduckAudio();
             EventBus.emit('voiceLabel', { text: '' });
             if (_pendingStart && _enabled) { _pendingStart = false; _startRecording(); }
         };
+    }
+
+    let _duckedVolume = null; // volume gốc trước khi duck, để khôi phục đúng
+
+    /**
+     * Audio ducking: giảm tạm âm lượng video trong lúc ghi âm lệnh, tránh mic
+     * bắt nhầm tiếng thoại/nhạc phim phát ra từ loa lẫn vào giọng user (đặc
+     * biệt khi không dùng tai nghe). Không mute hẳn (0%) vì mute có thể kích
+     * hoạt logic khác không mong muốn (ví dụ UI hiển thị icon loa tắt tiếng)
+     * — chỉ hạ xuống mức rất nhỏ đủ để giảm nhiễu mà vẫn nghe lờ mờ được.
+     */
+    function _duckAudio() {
+        const vol = PlayerControl.getVolume();
+        if (vol > 0.08) { // chỉ duck nếu volume hiện tại đủ lớn để gây nhiễu thật
+            _duckedVolume = vol;
+            PlayerControl.setVolume(0.05);
+        }
+    }
+    function _unduckAudio() {
+        if (_duckedVolume !== null) {
+            PlayerControl.setVolume(_duckedVolume);
+            _duckedVolume = null;
+        }
     }
 
     function _startRecording() {
@@ -373,13 +429,15 @@ const VoiceControl = (() => {
         if (!_sr || !_initialized) _init();
         if (!_sr) return;
         _recording = true;
+        _duckAudio();
         try {
             _sr.start();
             EventBus.emit('voiceLabel', { text: '🎤 Đang nghe...' });
         } catch (e) {
             _recording = false;
+            _unduckAudio();
             _init();
-            if (_sr) { try { _sr.start(); _recording = true; } catch (e2) { warn('[Voice] start failed:', e2); } }
+            if (_sr) { try { _sr.start(); _recording = true; _duckAudio(); } catch (e2) { warn('[Voice] start failed:', e2); } }
         }
     }
 
@@ -387,11 +445,28 @@ const VoiceControl = (() => {
         _pendingStart = false;
         if (!_recording) return;
         _recording = false; _stopping = true;
+        _unduckAudio();
         try { _sr?.abort(); } catch (e) { _stopping = false; }
         EventBus.emit('voiceLabel', { text: '' });
     }
 
-    function _processCommand(raw) {
+    /**
+     * Tạo regex với "word boundary" nhận diện ĐÚNG ký tự tiếng Việt có dấu.
+     * JavaScript's \b chỉ coi [A-Za-z0-9_] là "word character" — mọi ký tự
+     * tiếng Việt có dấu (đ, ê, ô, õ, rõ, dừng...) bị \w BỎ SÓT, khiến \b đặt
+     * sai vị trí biên và regex fail khi từ khoá bắt đầu/kết thúc bằng ký tự
+     * có dấu. Đây là bug thật đã xác nhận qua test: /\b(đứng lại)\b/.test('đứng
+     * lại nhé') trả về false SAI (phải true) trước khi có hàm này.
+     * Dùng \p{L}\p{N} (Unicode property escape, flag 'u') thay cho \w để
+     * nhận diện đúng MỌI chữ cái/số bất kể ngôn ngữ.
+     * @param {string} pattern - phần bên trong (...) của regex, ví dụ 'dừng|tạm dừng|pause'
+     * @returns {RegExp}
+     */
+    function _re(pattern) {
+        return new RegExp(`(?<![\\p{L}\\p{N}])(?:${pattern})(?![\\p{L}\\p{N}])`, 'iu');
+    }
+
+    function _processCommand(raw, fallbackAlternatives = []) {
         // Normalize: lowercase, chuẩn hoá số thập phân kiểu VN (1,5 → 1.5)
         // TRƯỚC khi xoá dấu câu, rồi mới xoá phần còn lại. Thứ tự này quan
         // trọng: xoá dấu phẩy trước khi xử lý sẽ biến "1,5" thành "15" (sai
@@ -446,33 +521,33 @@ const VoiceControl = (() => {
         }
 
         // ── 1. NAVIGATION ────────────────────────────────────────────────
-        if (/\b(tiếp theo|tập sau|tập kế|xem tiếp|chuyển tiếp|next)\b/.test(t)) {
+        if (_re('tiếp theo|tập sau|tập kế|xem tiếp|chuyển tiếp|next').test(t)) {
             if (_nextUrl) { _notify('Chuyển tập tiếp theo'); Navigator.goTo(_nextUrl); }
             else _notify('Không tìm thấy tập tiếp theo');
             return;
         }
-        if (/\b(quay lại|tập trước|back|trước đó|quay về)\b/.test(t)) {
+        if (_re('quay lại|tập trước|back|trước đó|quay về').test(t)) {
             if (_prevUrl) { _notify('Quay lại tập trước'); Navigator.goTo(_prevUrl); }
             else _notify('Không có tập trước');
             return;
         }
-        if (/\b(tải lại|reload|làm mới)\b/.test(t)) { _notify('Tải lại trang'); location.reload(); return; }
+        if (_re('tải lại|reload|làm mới').test(t)) { _notify('Tải lại trang'); location.reload(); return; }
 
         // ── 2. SEEK — absolute ────────────────────────────────────────────
-        if (/\b(tua đến|đến phút|tới phút|nhảy đến|đến giây|tua tới)\b/.test(t)) {
+        if (_re('tua đến|đến phút|tới phút|nhảy đến|đến giây|tua tới').test(t)) {
             const sec = _parseTime(t);
             if (sec !== null) { _seek(sec); _notify(`Tua đến ${sec}s`); }
             return;
         }
         // "bắt đầu", "đầu phim", "từ đầu"
-        if (/\b(từ đầu|đầu phim|bắt đầu lại|quay đầu)\b/.test(t)) { _seek(0); _notify('Về đầu'); return; }
+        if (_re('từ đầu|đầu phim|bắt đầu lại|quay đầu').test(t)) { _seek(0); _notify('Về đầu'); return; }
         // "cuối phim", "cuối video"
-        if (/\b(cuối phim|cuối video|kết thúc|tới cuối)\b/.test(t)) { _seek(dur - 3); _notify('Tới cuối'); return; }
+        if (_re('cuối phim|cuối video|kết thúc|tới cuối').test(t)) { _seek(dur - 3); _notify('Tới cuối'); return; }
         // "giữa phim"
-        if (/\b(giữa phim|giữa video)\b/.test(t)) { _seek(dur / 2); _notify('Đến giữa'); return; }
+        if (_re('giữa phim|giữa video').test(t)) { _seek(dur / 2); _notify('Đến giữa'); return; }
 
         // ── 3. SEEK — relative forward ────────────────────────────────────
-        if (/\b(tua nhanh|tua thêm|bỏ qua|skip|tiến lên|nhảy qua)\b/.test(t)) {
+        if (_re('tua nhanh|tua thêm|bỏ qua|skip|tiến lên|nhảy qua').test(t)) {
             const a = _parseAmount(t, 30);
             PlayerControl.seekBy(a); _notify(`+${a}s`); return;
         }
@@ -483,37 +558,42 @@ const VoiceControl = (() => {
         }
 
         // ── 4. SEEK — relative backward ───────────────────────────────────
-        if (/\b(tua lại|lùi lại|lùi về|xem lại|rewind|quay lại \d)\b/.test(t)) {
+        if (_re('tua lại|lùi lại|lùi về|xem lại|rewind|quay lại \d').test(t)) {
             const a = _parseAmount(t, 10);
             PlayerControl.seekBy(-a); _notify(`−${a}s`); return;
         }
 
         // ── 5. PLAY / PAUSE ───────────────────────────────────────────────
-        if (/\b(dừng|tạm dừng|pause|ngừng|đứng lại)\b/.test(t))   { PlayerControl.pause(); _notify('Dừng'); return; }
+        // ── 5. PLAY / PAUSE ───────────────────────────────────────────────
+        if (_re('dừng|tạm dừng|pause|ngừng|đứng lại').test(t)) {
+            const ok = PlayerControl.pause();
+            _notify(ok ? 'Dừng' : '⚠️ Không tìm thấy video để dừng'); return;
+        }
         // Loại trừ "phát" khi đứng sau "tốc độ" (ví dụ "tăng tốc độ phát lên
         // 1,5") — đó là lệnh đổi tốc độ, không phải lệnh play. Trước đây regex
         // này match nhầm và return sớm, khiến lệnh đổi tốc độ không bao giờ
         // chạy tới được nhánh PLAYBACK SPEED phía dưới.
-        if (!/tốc độ\s*phát/.test(t) && /\b(phát|play|tiếp tục|chạy|chơi|bắt đầu)\b/.test(t)) {
-            PlayerControl.play();  _notify('Phát'); return;
+        if (!/tốc độ\s*phát/.test(t) && _re('phát|play|tiếp tục|chạy|chơi|bắt đầu').test(t)) {
+            const ok = PlayerControl.play();
+            _notify(ok ? 'Phát' : '⚠️ Không tìm thấy video để phát'); return;
         }
         // Toggle
-        if (/\b(toggle|bật tắt phát)\b/.test(t)) {
+        if (_re('toggle|bật tắt phát').test(t)) {
             PlayerControl.togglePlay(); _notify('Toggle'); return;
         }
 
         // ── 6. VOLUME ─────────────────────────────────────────────────────
-        if (/\b(tắt tiếng|im lặng|mute)\b/.test(t))                { PlayerControl.mute(); _notify('Tắt tiếng'); return; }
-        if (/\b(bật tiếng|unmute|bỏ tắt tiếng)\b/.test(t))         { PlayerControl.unmute(); _vol(PlayerControl.getVolume() || 0.8); _notify('Bật tiếng'); return; }
-        if (/\b(tăng âm|to hơn|lớn hơn)\b/.test(t)) {
+        if (_re('tắt tiếng|im lặng|mute').test(t))                { PlayerControl.mute(); _notify('Tắt tiếng'); return; }
+        if (_re('bật tiếng|unmute|bỏ tắt tiếng').test(t))         { PlayerControl.unmute(); _vol(PlayerControl.getVolume() || 0.8); _notify('Bật tiếng'); return; }
+        if (_re('tăng âm|to hơn|lớn hơn').test(t)) {
             const step = _parseAmount(t, 10) / 100;
             _vol((v?.volume ?? 0.5) + step); _notify(`Âm lượng +${Math.round(step*100)}%`); return;
         }
-        if (/\b(giảm âm|nhỏ hơn|bé hơn)\b/.test(t)) {
+        if (_re('giảm âm|nhỏ hơn|bé hơn').test(t)) {
             const step = _parseAmount(t, 10) / 100;
             _vol((v?.volume ?? 0.5) - step); _notify(`Âm lượng −${Math.round(step*100)}%`); return;
         }
-        if (/\b(âm lượng|volume)\b/.test(t)) {
+        if (_re('âm lượng|volume').test(t)) {
             const m = t.match(/(\d+)/);
             if (m) { _vol(+m[1] / 100); _notify(`Âm lượng ${m[1]}%`); }
             return;
@@ -525,7 +605,7 @@ const VoiceControl = (() => {
         }
 
         // ── 7. PLAYBACK SPEED ─────────────────────────────────────────────
-        if (/\b(bình thường|tốc độ bình thường|1x|normal speed)\b/.test(t)) { _rate(1);    _notify('1x'); return; }
+        if (_re('bình thường|tốc độ bình thường|1x|normal speed').test(t)) { _rate(1);    _notify('1x'); return; }
 
         // Exact: "tốc độ 1.5" / "1.5x" / "hai lần" — kiểm tra TRƯỚC nhánh
         // "nhanh hơn/tăng tốc" (tương đối, không có số), vì câu như "tăng tốc
@@ -543,64 +623,64 @@ const VoiceControl = (() => {
             if (m2) { _rate(+m2[1]); _notify(m2[1] + 'x'); return; }
         }
 
-        if (/\b(nhanh hơn|tăng tốc)\b/.test(t)) {
+        if (_re('nhanh hơn|tăng tốc').test(t)) {
             const m = t.match(/(\d+(?:\.\d+)?)\s*x/);
             const step = m ? +m[1] : PlayerControl.getRate() + 0.25;
             _rate(step); _notify(step + 'x'); return;
         }
-        if (/\b(chậm hơn|giảm tốc)\b/.test(t)) {
+        if (_re('chậm hơn|giảm tốc').test(t)) {
             const cur = PlayerControl.getRate();
             _rate(cur - 0.25); _notify((cur - 0.25).toFixed(2) + 'x'); return;
         }
 
         // ── 8. FULLSCREEN ─────────────────────────────────────────────────
-        if (/\b(toàn màn hình|fullscreen|phóng to màn hình)\b/.test(t)) {
+        if (_re('toàn màn hình|fullscreen|phóng to màn hình').test(t)) {
             PlayerControl.toggleFullscreen(); _notify('Toàn màn hình'); return;
         }
-        if (/\b(thoát toàn màn|thu nhỏ màn|exit fullscreen)\b/.test(t)) {
+        if (_re('thoát toàn màn|thu nhỏ màn|exit fullscreen').test(t)) {
             PlayerControl.exitFullscreen(); _notify('Thoát toàn màn'); return;
         }
 
         // ── 9. SUBTITLE / CAPTION ─────────────────────────────────────────
-        if (/\b(phụ đề|subtitle|caption|cc)\b/.test(t)) {
+        if (_re('phụ đề|subtitle|caption|cc').test(t)) {
             document.querySelector('.ytp-subtitles-button')?.click(); _notify('Toggle phụ đề'); return;
         }
 
         // ── 10. QUALITY ───────────────────────────────────────────────────
         // Sửa bug cũ: "720" và "1080" trước đây bị gộp chung 1 nhánh, luôn set
         // 1080p bất kể user nói số nào. Giờ tách riêng để set đúng resolution.
-        if (/\b(1080p?|full ?hd)\b/.test(t)) {
+        if (_re('1080p?|full ?hd').test(t)) {
             const ok = PlayerControl.setQuality(1080); _notify(ok ? '1080p' : 'Không đổi được chất lượng'); return;
         }
         if (/\b(720p?|(?<!full ?)hd)\b/.test(t)) {
             const ok = PlayerControl.setQuality(720); _notify(ok ? '720p' : 'Không đổi được chất lượng'); return;
         }
-        if (/\b(chất lượng thấp|tiết kiệm data|360p?)\b/.test(t)) {
+        if (_re('chất lượng thấp|tiết kiệm data|360p?').test(t)) {
             const ok = PlayerControl.setQuality(360); _notify(ok ? '360p' : 'Không đổi được chất lượng'); return;
         }
-        if (/\b(144p?|240p?)\b/.test(t)) {
+        if (_re('144p?|240p?').test(t)) {
             const m = t.match(/144|240/);
             const ok = PlayerControl.setQuality(+m[0]); _notify(ok ? m[0] + 'p' : 'Không đổi được chất lượng'); return;
         }
-        if (/\b(tự động|auto quality|chất lượng tự động)\b/.test(t)) {
+        if (_re('tự động|auto quality|chất lượng tự động').test(t)) {
             const ok = PlayerControl.setQuality('auto'); _notify(ok ? 'Auto' : 'Không đổi được chất lượng'); return;
         }
 
         // ── 11. THEATER / MINI PLAYER ─────────────────────────────────────
-        if (/\b(rạp|theater|cinema|chế độ rạp)\b/.test(t)) {
+        if (_re('rạp|theater|cinema|chế độ rạp').test(t)) {
             document.querySelector('.ytp-size-button')?.click(); _notify('Theater mode'); return;
         }
-        if (/\b(thu nhỏ cửa sổ|mini player|mini)\b/.test(t)) {
+        if (_re('thu nhỏ cửa sổ|mini player|mini').test(t)) {
             document.querySelector('.ytp-miniplayer-button')?.click(); _notify('Mini player'); return;
         }
 
         // ── 12. PiP ───────────────────────────────────────────────────────
-        if (/\b(pip|picture in picture|màn hình nổi|nổi)\b/.test(t)) {
+        if (_re('pip|picture in picture|màn hình nổi|nổi').test(t)) {
             PlayerControl.togglePiP(); _notify('PiP'); return;
         }
 
         // ── 13. MODE TOGGLES ──────────────────────────────────────────────
-        if (/\b(bỏ qua quảng cáo tài trợ|sponsor block|sponsorblock|skip sponsor)\b/.test(t)) {
+        if (_re('bỏ qua quảng cáo tài trợ|sponsor block|sponsorblock|skip sponsor').test(t)) {
             const nv = !Storage.getFeatureFlags().sponsorBlock;
             Storage.saveFlag('sponsorBlock', nv);
             const vid = new URLSearchParams(location.search).get('v');
@@ -611,24 +691,24 @@ const VoiceControl = (() => {
         // user đã lưu, nhưng bản chất đây là AdBlock toggle (xem AdBlock module).
         // 'marathon'/'xem liên tục' giữ lại cho backward-compat với người dùng
         // cũ đã quen câu lệnh, nhưng thêm từ khoá đúng bản chất để tránh nhầm.
-        if (/\b(marathon|xem liên tục|chặn quảng cáo|chặn qc|bỏ quảng cáo)\b/.test(t)) {
+        if (_re('marathon|xem liên tục|chặn quảng cáo|chặn qc|bỏ quảng cáo').test(t)) {
             const nv = !Storage.getFeatureFlags().marathon;
             Storage.saveFlag('marathon', nv);
             EventBus.emit('modeChange', { key: 'marathon', value: nv });
             _notify('Chặn quảng cáo ' + (nv ? 'ON' : 'OFF')); return;
         }
-        if (/\b(audio mode|chế độ nghe|chỉ nghe|nghe thôi)\b/.test(t)) {
+        if (_re('audio mode|chế độ nghe|chỉ nghe|nghe thôi').test(t)) {
             const nv = !AudioMode.isActive();
             EventBus.emit(nv ? 'audioModeEnable' : 'audioModeDisable');
             _notify('Audio Mode ' + (nv ? 'ON' : 'OFF')); return;
         }
-        if (/\b(tự động chuyển|auto next|tự chuyển)\b/.test(t)) {
+        if (_re('tự động chuyển|auto next|tự chuyển').test(t)) {
             const nv = !Storage.getFeatureFlags().autoPlay;
             Storage.saveFlag('auto', nv);
             EventBus.emit('modeChange', { key: 'autoPlay', value: nv });
             _notify('Tự chuyển ' + (nv ? 'ON' : 'OFF')); return;
         }
-        if (/\b(auto skip|tự bỏ qua|bỏ intro)\b/.test(t)) {
+        if (_re('auto skip|tự bỏ qua|bỏ intro').test(t)) {
             const nv = !Storage.getFeatureFlags().autoSkip;
             Storage.saveFlag('autoskip', nv);
             EventBus.emit('modeChange', { key: 'autoSkip', value: nv });
@@ -636,31 +716,31 @@ const VoiceControl = (() => {
         }
 
         // ── 14. SOCIAL ────────────────────────────────────────────────────
-        if (/\b(thích|like|tim)\b/.test(t) && !/không thích/.test(t)) {
+        if (_re('thích|like|tim').test(t) && !/không thích/.test(t)) {
             document.querySelector('#top-level-buttons-computed yt-icon-button:first-child button')?.click();
             _notify('Đã like'); return;
         }
-        if (/\b(không thích|dislike)\b/.test(t)) {
+        if (_re('không thích|dislike').test(t)) {
             document.querySelector('#top-level-buttons-computed yt-icon-button:nth-child(2) button')?.click();
             _notify('Dislike'); return;
         }
-        if (/\b(đăng ký|subscribe)\b/.test(t)) {
+        if (_re('đăng ký|subscribe').test(t)) {
             document.querySelector('#subscribe-button button, ytd-subscribe-button-renderer button')?.click();
             _notify('Subscribe'); return;
         }
-        if (/\b(chia sẻ|share)\b/.test(t)) {
+        if (_re('chia sẻ|share').test(t)) {
             document.querySelector('#share-button button, button[aria-label*="Share"]')?.click();
             _notify('Share'); return;
         }
 
         // ── 15. WATCH LATER ───────────────────────────────────────────────
-        if (/\b(xem sau|save|lưu lại|bookmark)\b/.test(t)) {
+        if (_re('xem sau|save|lưu lại|bookmark').test(t)) {
             Storage.addToWatchLater(location.href, document.title);
             _notify('Đã lưu vào Xem sau'); return;
         }
 
         // ── 16. SCREENSHOT / CLIP ─────────────────────────────────────────
-        if (/\b(chụp màn|screenshot|chụp ảnh)\b/.test(t)) {
+        if (_re('chụp màn|screenshot|chụp ảnh').test(t)) {
             if (!v) return;
             const c = document.createElement('canvas');
             c.width = v.videoWidth; c.height = v.videoHeight;
@@ -673,43 +753,128 @@ const VoiceControl = (() => {
         }
 
         // ── 17. LOOP ──────────────────────────────────────────────────────
-        if (/\b(lặp lại|loop|phát lại)\b/.test(t)) {
+        if (_re('lặp lại|loop|phát lại').test(t)) {
             if (v) { v.loop = !v.loop; _notify('Loop ' + (v.loop ? 'ON' : 'OFF')); }
             return;
         }
 
         // ── 18. INFO / STATUS ─────────────────────────────────────────────
-        if (/\b(thời gian|còn bao lâu|bao lâu nữa)\b/.test(t)) {
+        if (_re('thời gian|còn bao lâu|bao lâu nữa').test(t)) {
             if (!v) return;
             const rem = Math.round(dur - v.currentTime);
             const m = Math.floor(rem/60), s = rem%60;
             _notify(`Còn ${m}p${s}s`); return;
         }
-        if (/\b(tốc độ hiện tại|đang chạy bao nhanh)\b/.test(t)) {
+        if (_re('tốc độ hiện tại|đang chạy bao nhanh').test(t)) {
             _notify(`${PlayerControl.getRate()}x`); return;
         }
-        if (/\b(âm lượng hiện tại|volume mấy)\b/.test(t)) {
+        if (_re('âm lượng hiện tại|volume mấy').test(t)) {
             _notify(`${Math.round(PlayerControl.getVolume()*100)}%`); return;
         }
 
         // ── 19. SCROLL PAGE ───────────────────────────────────────────────
-        if (/\b(cuộn xuống|scroll down)\b/.test(t))  { window.scrollBy(0, 300); _notify('Cuộn xuống'); return; }
-        if (/\b(cuộn lên|scroll up)\b/.test(t))      { window.scrollBy(0, -300); _notify('Cuộn lên'); return; }
-        if (/\b(lên đầu trang|top)\b/.test(t))       { window.scrollTo(0,0); _notify('Lên đầu trang'); return; }
+        if (_re('cuộn xuống|scroll down').test(t))  { window.scrollBy(0, 300); _notify('Cuộn xuống'); return; }
+        if (_re('cuộn lên|scroll up').test(t))      { window.scrollBy(0, -300); _notify('Cuộn lên'); return; }
+        if (_re('lên đầu trang|top').test(t))       { window.scrollTo(0,0); _notify('Lên đầu trang'); return; }
 
         // ── 20. PANEL HIDE/SHOW ───────────────────────────────────────────
-        if (/\b(ẩn bảng|ẩn panel|đóng panel)\b/.test(t)) {
+        if (_re('ẩn bảng|ẩn panel|đóng panel').test(t)) {
             document.getElementById('vtv-panel')?.classList.add('vtv-hidden');
             document.getElementById('vtv-fab')?.classList.add('vtv-show');
             _notify('Ẩn bảng'); return;
         }
-        if (/\b(hiện bảng|mở panel|hiện panel)\b/.test(t)) {
+        if (_re('hiện bảng|mở panel|hiện panel').test(t)) {
             document.getElementById('vtv-panel')?.classList.remove('vtv-hidden');
             document.getElementById('vtv-fab')?.classList.remove('vtv-show');
             _notify('Hiện bảng'); return;
         }
 
-        // Unrecognized
+        // ── 21. DETECTIVE — suy luận ý định GIÁN TIẾP ──────────────────────
+        // Khác 20 nhóm trên (match từ khoá LỆNH trực tiếp: "tạm dừng", "tua
+        // tới"...), nhóm này DIỄN GIẢI câu nói đời thường không phải lệnh rõ
+        // ràng, suy ra hành động phù hợp. Đặt CUỐI CÙNG (chỉ chạy khi không
+        // command trực tiếp nào match) để không cướp mất câu lệnh rõ ràng —
+        // ví dụ "to hơn" (lệnh trực tiếp, đã match ở nhóm VOLUME) không bao
+        // giờ rơi xuống đây; chỉ câu như "nghe không rõ" (không phải lệnh,
+        // là than phiền) mới cần suy luận.
+        //
+        // Mỗi rule đều có ĐIỀU KIỆN NGỮ CẢNH THU HẸP để giảm false positive
+        // (ví dụ "ồn quá" phải đi kèm ý than phiền về ÂM LƯỢNG, không phải
+        // bình luận nội dung phim ồn ào — dù ranh giới này không hoàn hảo
+        // 100%, đây là giới hạn cố hữu của rule-based NLP, không phải AI thật
+        // hiểu ngữ nghĩa).
+        {
+            // Than phiền nghe không rõ / ồn → có thể do TV/loa nhỏ, gợi ý tăng
+            // âm lượng HOẶC bật phụ đề (không tự làm cả 2 để tránh áp đặt).
+            if (_re('nghe không rõ|nghe không được|không nghe rõ|nghe khó quá').test(t)) {
+                PlayerControl.setVolume(Math.min(1, PlayerControl.getVolume() + 0.2));
+                _notify('🔍 Đã tăng âm lượng — nói "phụ đề" nếu vẫn khó nghe'); return;
+            }
+            if (_re('ồn quá|to quá|nhức tai|chói tai').test(t)) {
+                PlayerControl.setVolume(Math.max(0, PlayerControl.getVolume() - 0.2));
+                _notify('🔍 Đã giảm âm lượng'); return;
+            }
+
+            // Than phiền buồn ngủ/mệt → không tự pause (có thể user chỉ đang
+            // tâm sự, tự ý dừng video giữa chừng là áp đặt quá mức), chỉ gợi
+            // ý nhẹ nhàng qua notify.
+            if (_re('buồn ngủ quá|mệt quá|díp mắt rồi').test(t)) {
+                _notify('🔍 Nói "tạm dừng" nếu muốn nghỉ, mình sẽ nhớ vị trí đang xem'); return;
+            }
+
+            // Than phiền giật/lag → khả năng cao do quality cao/mạng chậm,
+            // chủ động hạ 1 bậc quality (đã có BufferMonitor tự động, nhưng
+            // đây phản hồi NGAY theo yêu cầu thay vì đợi đủ ngưỡng buffering).
+            if (_re('giật quá|lag quá|đứng hình|khựng lại|chậm quá').test(t)) {
+                const avail = PlayerControl.getAvailableQualities();
+                const ladder = ['hd1080', 'hd720', 'large', 'medium', 'small'];
+                const cur = PlayerControl.getQuality();
+                const idx = ladder.indexOf(cur);
+                const target = idx >= 0 && idx < ladder.length - 1 ? ladder[idx + 1] : 'medium';
+                const ok = PlayerControl.setQuality(target);
+                _notify(ok ? `🔍 Đã giảm chất lượng xuống ${target} cho mượt hơn` : '🔍 Không tự giảm được chất lượng, thử tự chỉnh trong Settings'); return;
+            }
+
+            // Hỏi "đang xem gì" / "phim gì đây" → trả lời bằng info đã parse
+            // được (không phải lệnh điều khiển, là câu hỏi thông tin).
+            if (_re('đang xem gì|phim gì đây|phim gì vậy|đây là phim gì').test(t)) {
+                const info = window._vtvParsedInfo;
+                _notify(info ? `🔍 ${info.series} — Tập ${info.episode}` : '🔍 Chưa nhận diện được tên phim'); return;
+            }
+
+            // Hỏi "còn bao lâu nữa hết tập" → tính từ currentTime/duration.
+            if (_re('còn bao lâu|sắp hết chưa|bao lâu nữa hết').test(t)) {
+                const vv = VideoContext.getVideoEl();
+                if (vv?.duration) {
+                    const remain = Math.round(vv.duration - vv.currentTime);
+                    const mins = Math.floor(remain / 60), secs = remain % 60;
+                    _notify(`🔍 Còn ${mins} phút ${secs} giây`);
+                } else {
+                    _notify('🔍 Chưa xác định được thời lượng');
+                }
+                return;
+            }
+
+            // "Bỏ lỡ gì không / tóm tắt lại" → không có khả năng tóm tắt nội
+            // dung thật (cần hiểu video, ngoài khả năng rule-based), nhưng
+            // trung thực báo rõ giới hạn thay vì im lặng bỏ qua như 1 lệnh
+            // không nhận diện được — người dùng biết đây là giới hạn thật,
+            // không phải lỗi.
+            if (_re('tóm tắt|bỏ lỡ gì không|vừa nãy nói gì').test(t)) {
+                _notify('🔍 Xin lỗi, mình chưa thể tóm tắt nội dung video — chỉ điều khiển phát/tua/âm lượng'); return;
+            }
+        }
+
+        // Unrecognized với alternative hiện tại — nếu còn alternative khác từ
+        // Speech API chưa thử (do audio bị nhiễu khiến lựa chọn đầu sai),
+        // thử tiếp thay vì báo lỗi ngay. Chỉ báo "❓ unrecognized" thật sự khi
+        // đã thử HẾT mọi alternative mà không cái nào match được lệnh nào.
+        if (fallbackAlternatives.length > 0) {
+            const [next, ...rest] = fallbackAlternatives;
+            log('[Voice] alternative đầu không match, thử:', next);
+            return _processCommand(next, rest);
+        }
+
         log('[Voice] unrecognized command:', t);
         EventBus.emit('voiceLabel', { text: '❓ ' + raw });
         setTimeout(() => EventBus.emit('voiceLabel', { text: '' }), 2000);

@@ -472,12 +472,11 @@ const UI = (() => {
     // ─── Toggles ──────────────────────────────────────────────────────────────
     const TOGGLE_DEFS = [
         { id: 'tog-auto',     flag: 'autoPlay',     gm: 'auto',      icon: '⏭', label: 'Tự chuyển' },
-        { id: 'tog-marathon', flag: 'marathon',     gm: 'marathon',  icon: '🚫', label: 'Chặn QC'  }, // flag/gm key giữ tên cũ 'marathon' để không phá dữ liệu user đã lưu, nhưng thực chất đây là AdBlock toggle (xem AdBlock module trong features.js) — label đổi cho đúng bản chất, tránh nhầm lẫn với tính năng xem liên tục nhiều tập.
+        { id: 'tog-marathon', flag: 'marathon',     gm: 'marathon',  icon: '🚫', label: 'Chặn QC+', combo: 'sponsorBlock' }, // flag/gm key giữ tên cũ 'marathon' để không phá dữ liệu user đã lưu, nhưng thực chất đây là AdBlock toggle. GỘP với SponsorBlock: bật 1 nút này tắt/bật CẢ HAI (quảng cáo YouTube lẫn đoạn sponsor trong video) — trước đây 2 nút riêng biệt (Chặn QC + Skip Sponsor) gây rối vì cùng chung mục đích "loại bỏ nội dung không muốn xem".
         { id: 'tog-skip',     flag: 'autoSkip',     gm: 'autoskip',  icon: '⏩', label: 'Skip Intro'},
         { id: 'tog-voice',    flag: 'voiceEnabled', gm: 'voice',     icon: '🎤', label: 'Voice'     },
         { id: 'tog-audio',    flag: 'audioMode',    gm: 'audioMode', icon: '🔇', label: 'Audio'     },
         { id: 'tog-pip',      flag: 'pipEnabled',   gm: 'pip',       icon: '🖼',  label: 'PiP'       },
-        { id: 'tog-sb',       flag: 'sponsorBlock', gm: 'sponsorBlock', icon: '🚫', label: 'Skip Sponsor', advanced: true },
         { id: 'tog-wp',       flag: 'watchParty',   gm: 'watchParty', icon: '🔗', label: 'Sync tab (cùng máy)', advanced: true }, // Chỉ đồng bộ giữa các tab CÙNG máy/CÙNG trình duyệt qua BroadcastChannel — KHÔNG phải xem chung qua mạng với người khác (khác Teleparty/Discord). Đổi label cho rõ, tránh hiểu lầm.
         { id: 'tog-chap',     flag: 'chapterDetect', gm: 'chapterDetect', icon: '📑', label: 'Chapters', advanced: true },
         { id: 'tog-tv',       flag: 'tvMode',       gm: 'tvMode',      icon: '📺', label: 'TV Mode', advanced: true },
@@ -543,14 +542,22 @@ const UI = (() => {
 
         if (info.roomId) {
             // Trạng thái 3: đang trong phòng
+            const followChecked = WatchParty.getFollowNav() ? 'checked' : '';
             el.innerHTML = `
                 <div class="vtv-room-code" id="vtv-room-code-display" title="Bấm để copy">${info.roomId}</div>
                 <div class="vtv-room-status">${info.isHost ? 'Chủ phòng' : 'Khách'} · ${info.peerCount} người khác đang kết nối</div>
+                <label class="vtv-room-row" style="cursor:pointer">
+                    <input type="checkbox" id="vtv-room-follow-nav" ${followChecked}>
+                    <span class="vtv-room-status" style="flex:1">Tự chuyển tập theo phòng</span>
+                </label>
                 <button class="vtv-room-btn" id="vtv-room-leave-btn">Rời phòng</button>`;
             document.getElementById('vtv-room-code-display')?.addEventListener('click', () => {
                 navigator.clipboard?.writeText(info.roomId).then(() => {
                     EventBus.emit('voiceLabel', { text: '📋 Đã copy mã phòng' });
                 }).catch(() => {});
+            });
+            document.getElementById('vtv-room-follow-nav')?.addEventListener('change', (e) => {
+                WatchParty.setFollowNav(e.target.checked);
             });
             document.getElementById('vtv-room-leave-btn')?.addEventListener('click', () => {
                 WatchParty.leaveRoom();
@@ -634,9 +641,17 @@ const UI = (() => {
                 if (def.flag === 'voiceEnabled') EventBus.emit(val ? 'voiceStart'       : 'voiceStop');
                 if (def.flag === 'audioMode')    EventBus.emit(val ? 'audioModeEnable'  : 'audioModeDisable');
                 if (def.flag === 'pipEnabled')   EventBus.emit(val ? 'pipEnable'        : 'pipDisable');
-                if (def.flag === 'sponsorBlock') {
-                    const vid = new URLSearchParams(location.search).get('v');
-                    val ? SponsorBlock.enable(vid) : SponsorBlock.disable();
+                // Combo flag: nút "Chặn QC+" (marathon) giờ điều khiển CẢ
+                // AdBlock (qua modeChange emit ở trên) LẪN SponsorBlock cùng
+                // lúc — gộp 2 tính năng "loại bỏ nội dung không muốn xem"
+                // thành 1 nút duy nhất thay vì tách rời gây rối.
+                if (def.combo) {
+                    _flags[def.combo] = val;
+                    Storage.saveFlag(def.combo, val);
+                    if (def.combo === 'sponsorBlock') {
+                        const vid = new URLSearchParams(location.search).get('v');
+                        val ? SponsorBlock.enable(vid) : SponsorBlock.disable();
+                    }
                 }
                 if (def.flag === 'watchParty') {
                     val ? WatchParty.enable() : WatchParty.disable();

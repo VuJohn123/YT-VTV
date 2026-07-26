@@ -20,7 +20,13 @@
 
     // ─── Restore persisted feature states ────────────────────────────────────
     const _initFlags = Storage.getFeatureFlags();
-    if (_initFlags.marathon)     { document.body.classList.add('vtv-marathon'); AdBlock.start(); }
+    if (_initFlags.marathon)     {
+        document.body.classList.add('vtv-marathon'); AdBlock.start();
+        // Migration: nếu user đã bật "Chặn QC+" nhưng flag sponsorBlock cũ
+        // (từ trước khi có tính năng combo) chưa đồng bộ, tự cập nhật để
+        // nhất quán với những gì UI hiển thị (nút gộp = cả 2 cùng bật).
+        if (!Storage.getFeatureFlags().sponsorBlock) Storage.saveFlag('sponsorBlock', true);
+    }
     if (_initFlags.voiceEnabled) VoiceControl.start();
     if (_initFlags.pipEnabled)   AutoPiP.enable();
     if (_initFlags.audioMode)    AudioMode.enable();
