@@ -547,7 +547,22 @@ const VoiceControl = (() => {
         if (_re('giữa phim|giữa video').test(t)) { _seek(dur / 2); _notify('Đến giữa'); return; }
 
         // ── 3. SEEK — relative forward ────────────────────────────────────
-        if (_re('tua nhanh|tua thêm|bỏ qua|skip|tiến lên|nhảy qua').test(t)) {
+        // Bug đã sửa: "tua 10 phút" không khớp pattern cũ (chỉ có "tua nhanh/
+        // tua thêm", không có "tua" trần) → lệnh bị rơi qua không xử lý. Thêm
+        // "tua" trần vào đây, NHƯNG loại trừ "tua lại/tua lùi" (thuộc mục 4 —
+        // lùi) bằng negative lookahead ngay trong cụm từ để tránh nuốt nhầm
+        // lệnh lùi khi 2 khối được test theo thứ tự forward trước.
+        if (_re('tua nhanh|tua thêm|bỏ qua|skip|tiến lên|nhảy qua').test(t) ||
+            (_re('tua').test(t) && !/tua\s*(lại|lùi)/.test(t))) {
+            // Nếu transcript hiện tại KHÔNG có số (ví dụ Web Speech API nhận
+            // sai "30 giây" thành "iso" — lỗi thật đã ghi nhận), thử các
+            // alternative khác của cùng lượt ghi âm xem có bản nào chứa số
+            // trước khi đành mặc định 30s. Trước đây luôn mặc định ngay lập
+            // tức dù alternative kế có thể chứa đúng con số user nói.
+            if (!/\d/.test(t)) {
+                const altIdx = fallbackAlternatives.findIndex(a => /\d/.test(a));
+                if (altIdx !== -1) return _processCommand(fallbackAlternatives[altIdx], fallbackAlternatives.slice(altIdx + 1));
+            }
             const a = _parseAmount(t, 30);
             PlayerControl.seekBy(a); _notify(`+${a}s`); return;
         }
@@ -558,7 +573,11 @@ const VoiceControl = (() => {
         }
 
         // ── 4. SEEK — relative backward ───────────────────────────────────
-        if (_re('tua lại|lùi lại|lùi về|xem lại|rewind|quay lại \d').test(t)) {
+        if (_re('tua lại|tua lùi|lùi lại|lùi về|xem lại|rewind|quay lại \d').test(t)) {
+            if (!/\d/.test(t)) {
+                const altIdx = fallbackAlternatives.findIndex(a => /\d/.test(a));
+                if (altIdx !== -1) return _processCommand(fallbackAlternatives[altIdx], fallbackAlternatives.slice(altIdx + 1));
+            }
             const a = _parseAmount(t, 10);
             PlayerControl.seekBy(-a); _notify(`−${a}s`); return;
         }
