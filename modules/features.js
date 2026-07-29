@@ -850,6 +850,30 @@ const VoiceControl = (() => {
             nv ? SponsorBlock.enable(vid) : SponsorBlock.disable();
             _notify('SponsorBlock ' + (nv ? 'ON' : 'OFF')); return;
         }
+
+        // ── SponsorBlock — tự đóng góp segment ──────────────────────────────
+        // Đây là tính năng GHI lên server công khai (khác mọi lệnh khác chỉ
+        // đọc/điều khiển cục bộ) — luôn thông báo rõ tính công khai này trong
+        // _notify để user hiểu trước khi gửi, không âm thầm submit.
+        if (_re('đánh dấu bắt đầu tài trợ|bắt đầu đánh dấu quảng cáo|đánh dấu đoạn tài trợ').test(t)) {
+            const start = SponsorBlock.startMark();
+            if (start == null) { _notify('⚠️ Không tìm thấy video để đánh dấu'); return; }
+            _notify(`🎯 Bắt đầu đánh dấu tại ${start.toFixed(0)}s — nói "kết thúc đánh dấu" khi hết đoạn`);
+            return;
+        }
+        if (_re('kết thúc đánh dấu|xong đánh dấu|đánh dấu kết thúc').test(t)) {
+            if (!SponsorBlock.isMarking()) { _notify('⚠️ Chưa bắt đầu đánh dấu'); return; }
+            EventBus.emit('voiceLabel', { text: '📤 Đang gửi đoạn tài trợ lên SponsorBlock (công khai, cộng đồng cùng dùng)...' });
+            SponsorBlock.finishMark('sponsor').then(result => {
+                if (result.ok) _notify(result.note || '✅ Đã gửi đoạn tài trợ lên SponsorBlock (công khai)');
+                else EventBus.emit('voiceLabel', { text: '⚠️ ' + result.error });
+            });
+            return;
+        }
+        if (_re('huỷ đánh dấu|hủy đánh dấu').test(t)) {
+            SponsorBlock.cancelMark();
+            _notify('Đã huỷ đánh dấu'); return;
+        }
         // Lưu ý: flag/gm key 'marathon' được giữ tên cũ để không phá dữ liệu
         // user đã lưu, nhưng bản chất đây là AdBlock toggle (xem AdBlock module).
         // 'marathon'/'xem liên tục' giữ lại cho backward-compat với người dùng

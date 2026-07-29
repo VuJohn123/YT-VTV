@@ -105,6 +105,23 @@ const Storage = (() => {
 
     function saveSkipData(key, data) { GM_setValue('vtvUlt_skipData' + key, JSON.stringify(data)); }
 
+    /**
+     * Đề xuất introAvg SỚM (từ tập đầu tiên) dựa trên ChapterDetector (phát
+     * hiện khoảng lặng audio) — CHỦ Ý tách riêng khỏi `introAvg` (chỉ tính từ
+     * ≥3 lần user THẬT SỰ tự skip, xem learnSkip). Không bao giờ ghi đè lên
+     * introAvg đã có — suggested chỉ là gợi ý độ tin cậy thấp hơn nhiều (audio
+     * có khoảng lặng không nhất thiết là hết intro — có thể là khoảng lặng
+     * kịch tính giữa cảnh phim), dùng để HIỂN THỊ gợi ý cho user quyết định,
+     * KHÔNG dùng để tự động seek im lặng như introAvg thật.
+     */
+    function saveSuggestedIntro(key, seconds) {
+        const d = getSkipData(key);
+        if (d.introAvg) return; // đã có dữ liệu thật đáng tin hơn, không cần gợi ý nữa
+        if (d.introSuggested) return; // đã gợi ý rồi trong phiên trước, không ghi đè liên tục
+        d.introSuggested = Math.round(seconds);
+        saveSkipData(key, d);
+    }
+
     function learnSkip(key, from, to, duration) {
         const d = getSkipData(key);
         if (from < 5 && to > 5 && to < duration * 0.5) {
@@ -293,7 +310,7 @@ const Storage = (() => {
         currentProfile, switchProfile, setupProfileMenu,
         getSeries, saveSeries, clearSeries,
         getHistory, addToHistory, getAllHistory,
-        getSkipData, learnSkip,
+        getSkipData, saveSuggestedIntro, learnSkip,
         addStats, getStats, getProgress,
         getLastPosition, saveLastPosition, clearLastPosition,
         addToWatchLater, getWatchLater,

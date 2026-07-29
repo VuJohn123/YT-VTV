@@ -85,6 +85,117 @@ const SponsorBlock = (() => {
         }
     }
 
+    /**
+     * Wrapper Promise cho GM_xmlhttpRequest kiểu POST, dùng để SUBMIT segment
+     * lên SponsorBlock (khác với _gmFetch chỉ GET để đọc). Cùng lý do dùng
+     * GM_xmlhttpRequest thay vì fetch() như đã giải thích ở trên.
+     */
+    function _gmPost(url, bodyObj) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'POST', url,
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify(bodyObj),
+                onload: (res) => resolve(res),
+                onerror: (err) => reject(err),
+                ontimeout: () => reject(new Error('timeout')),
+            });
+        });
+    }
+
+    /**
+     * userID ẩn danh, sinh 1 lần và lưu vĩnh viễn (KHÔNG gắn với danh tính
+     * thật nào — đây chính là cách SponsorBlock chính thức hoạt động: userID
+     * chỉ dùng để server nhóm các lượt submit/vote lại, tính "uy tín"
+     * (reputation) theo thời gian, không phải để định danh user thật). Dùng
+     * getGlobal (không theo profile) vì reputation nên gắn với TRÌNH DUYỆT
+     * này nói chung, không tách theo từng profile nội bộ của userscript.
+     */
+    function _getAnonUserId() {
+        let id = Storage.getGlobal('sbUserId', null);
+        if (!id) {
+            id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : 'sb-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+            Storage.setGlobal('sbUserId', id);
+        }
+        return id;
+    }
+
+    /**
+     * Gửi 1 segment lên SponsorBlock — ĐÂY LÀ ĐÓNG GÓP CÔNG KHAI, dữ liệu
+     * (thời gian bắt đầu/kết thúc, category, userID ẩn danh) sẽ hiển thị cho
+     * TOÀN BỘ cộng đồng SponsorBlock dùng chung, không chỉ riêng user này —
+     * phải luôn thông báo rõ điều này cho user trước khi gửi (xem
+     * VoiceControl gọi hàm này).
+     * CHƯA TỪNG TEST VỚI SERVER THẬT (môi trường này không có mạng ra
+     * sponsor.ajay.app) — cấu trúc payload dựa theo API docs công khai của
+     * SponsorBlock, nhưng nên coi lần submit đầu tiên là "thử nghiệm", kiểm
+     * tra log console nếu server phản hồi lỗi bất ngờ.
+     */
+    async function submitSegment(videoId, category, startTime, endTime) {
+        if (!videoId || startTime == null || endTime == null) {
+            return { ok: false, error: 'Thiếu thông tin đoạn cần đánh dấu' };
+        }
+        const start = Math.min(startTime, endTime);
+        const end   = Math.max(startTime, endTime);
+        if (end - start < 1) {
+            return { ok: false, error: 'Đoạn quá ngắn (dưới 1 giây) — có thể do bấm nhầm liên tiếp' };
+        }
+        try {
+            const body = {
+                userID: _getAnonUserId(),
+                videoID: videoId,
+                segments: [{ segment: [start, end], category }],
+            };
+            const res = await _gmPost(API_BASE, body);
+            if (res.status >= 200 && res.status < 300) {
+                _cache.delete(videoId); // buộc fetch lại lần sau để lấy luôn segment vừa submit
+                log('[SponsorBlock] Đã submit:', category, start.toFixed(1), '→', end.toFixed(1));
+                return { ok: true };
+            }
+            if (res.status === 409) return { ok: true, note: 'Đoạn này đã có người khác đánh dấu trước rồi' };
+            warn('[SponsorBlock] Submit thất bại, HTTP', res.status, res.responseText);
+            return { ok: false, error: `Server trả lỗi HTTP ${res.status}` };
+        } catch (e) {
+            warn('[SponsorBlock] Lỗi khi submit:', e);
+            return { ok: false, error: 'Lỗi mạng khi gửi lên server' };
+        }
+    }
+
+    // ─── Đánh dấu thủ công (start/cancel/finish) ───────────────────────────────
+    let _markStart = null;
+    let _markStartedAt = 0;
+
+    function startMark() {
+        const v = VideoContext.getVideoEl();
+        if (!v) return null;
+        _markStart = v.currentTime;
+        _markStartedAt = Date.now();
+        return _markStart;
+    }
+
+    function cancelMark() { _markStart = null; }
+    function isMarking()  { return _markStart != null; }
+    function getMarkStart() { return _markStart; }
+
+    async function finishMark(category = 'sponsor') {
+        if (_markStart == null) return { ok: false, error: 'Chưa bắt đầu đánh dấu — nói "đánh dấu bắt đầu tài trợ" trước' };
+        const v = VideoContext.getVideoEl();
+        if (!v) { _markStart = null; return { ok: false, error: 'Không tìm thấy video' }; }
+        // Nếu user quên kết thúc quá lâu (>10 phút) — nhiều khả năng bấm nhầm
+        // hoặc quên, huỷ tự động thay vì submit 1 đoạn dài bất thường.
+        if (Date.now() - _markStartedAt > 10 * 60_000) {
+            _markStart = null;
+            return { ok: false, error: 'Đã quá lâu kể từ lúc bắt đầu đánh dấu (>10 phút), tự huỷ để tránh gửi nhầm đoạn quá dài' };
+        }
+        const start = _markStart;
+        const end   = v.currentTime;
+        _markStart  = null;
+        const videoId = new URLSearchParams(location.search).get('v');
+        return submitSegment(videoId, category, start, end);
+    }
+
     // ─── Auto-skip runtime ──────────────────────────────────────────────────
     let _segments = [];
     let _enabled = false;
@@ -142,5 +253,8 @@ const SponsorBlock = (() => {
     function isEnabled() { return _enabled; }
     function getCurrentSegments() { return _segments; }
 
-    return { getSegments, enable, disable, isEnabled, getCurrentSegments };
+    return {
+        getSegments, enable, disable, isEnabled, getCurrentSegments,
+        submitSegment, startMark, cancelMark, finishMark, isMarking, getMarkStart,
+    };
 })();

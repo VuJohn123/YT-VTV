@@ -65,6 +65,29 @@ const ChapterDetector = (() => {
         if (last && t - last < MIN_GAP_BETWEEN_CHAPTERS_S) return; // quá gần chapter trước, bỏ qua
         _chapters.push(Math.round(t));
         EventBus.emit('chapterDetected', { chapters: _chapters.slice() });
+
+        // Kết hợp với SeriesLearner/introAvg: chapter ĐẦU TIÊN phát hiện được
+        // trong phiên này, nếu rơi vào khung thời gian hợp lý cho intro (cùng
+        // tiêu chí với learnSkip trong storage.js: 5s < t < 50% duration), có
+        // thể là ranh giới hết intro thật — đề xuất SỚM ngay từ tập đầu tiên
+        // thay vì bắt user tự skip đủ 3 lần mới có introAvg. CHỦ Ý không tự
+        // seek/skip dựa trên gợi ý này (xem saveSuggestedIntro) — khoảng lặng
+        // audio không chắc chắn là hết intro, có thể là khoảnh khắc kịch tính
+        // giữa cảnh phim, chỉ nên GỢI Ý cho user tự quyết định.
+        if (_chapters.length === 1 && window._vtvSeriesKey) {
+            const v = VideoContext.getVideoEl();
+            const dur = v?.duration || 0;
+            if (dur > 0 && t > 5 && t < dur * 0.5) {
+                const before = Storage.getSkipData(window._vtvSeriesKey);
+                Storage.saveSuggestedIntro(window._vtvSeriesKey, t);
+                if (!before.introAvg && !before.introSuggested) {
+                    EventBus.emit('voiceLabel', {
+                        text: `💡 Có thể hết intro tại ${Math.round(t)}s — xem thêm vài tập để mình học chính xác hơn`,
+                    });
+                    setTimeout(() => EventBus.emit('voiceLabel', { text: '' }), 4000);
+                }
+            }
+        }
     }
 
     function _setupForCurrentVideo() {
