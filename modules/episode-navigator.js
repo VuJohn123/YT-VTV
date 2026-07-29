@@ -24,11 +24,22 @@ const EpisodeEngine = (() => {
     function _getCachedList(seriesKey) {
         const hit = _listCache.get(seriesKey);
         if (hit && Date.now() - hit.timestamp < LIST_CACHE_TTL) return hit.list;
+        // L2: RAM miss (thường do vừa hard-reload — _listCache là Map trong
+        // memory, mất sạch khi trang tải lại) — thử GM storage trước khi
+        // đành build lại từ đầu (search song song nhiều query, tốn thời gian
+        // nhất trong toàn bộ flow "Đang tìm...").
+        const persisted = Storage.getEpisodeListCache(seriesKey);
+        if (persisted) {
+            log('[EpisodeEngine] list cache hit (L2 persisted):', seriesKey, persisted.length, 'eps');
+            _listCache.set(seriesKey, { list: persisted, timestamp: Date.now() }); // nạp lại lên L1
+            return persisted;
+        }
         return null;
     }
 
     function _cacheList(seriesKey, list) {
         _listCache.set(seriesKey, { list, timestamp: Date.now() });
+        Storage.saveEpisodeListCache(seriesKey, list);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -366,7 +377,7 @@ const EpisodeEngine = (() => {
     }
 
     /** Invalidate list cache for a series (e.g. user force-refresh) */
-    function invalidateList(seriesKey) { _listCache.delete(seriesKey); }
+    function invalidateList(seriesKey) { _listCache.delete(seriesKey); Storage.clearEpisodeListCache(seriesKey); }
 
     return { run, findNext, findPrevious, invalidateList };
 })();

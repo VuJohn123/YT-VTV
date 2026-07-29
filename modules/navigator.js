@@ -25,7 +25,19 @@
 //      bao giờ fallback đè lên 1 navigation đã xảy ra.
 
 const Navigator = (() => {
-    const WATCHDOG_MS = 1200; // đủ thời gian cho SPA nav bắt đầu chuyển URL, không đủ lâu để user cảm thấy delay
+    // WATCHDOG_MS ban đầu bảo thủ (đủ an toàn cho lần nav đầu tiên khi chưa
+    // biết tốc độ SPA router thực tế của máy/mạng user). Sau khi đo được vài
+    // lần nav SPA thành công, tự thu hẹp về sát độ trễ thực đo được — cảm
+    // giác chuyển tập nhanh hơn rõ rệt trên máy mà SPA nav vốn xử lý nhanh,
+    // mà vẫn không mất lưới an toàn (không bao giờ xuống dưới WATCHDOG_FLOOR_MS).
+    const WATCHDOG_MS_INITIAL = 1200;
+    const WATCHDOG_FLOOR_MS   = 500;
+    const WATCHDOG_SAMPLE_MARGIN = 1.6; // hệ số an toàn nhân với latency trung bình đo được
+    const WATCHDOG_SAMPLES_NEEDED = 3;  // cần đủ mẫu mới tin tưởng điều chỉnh xuống
+
+    let _watchdogMs = WATCHDOG_MS_INITIAL;
+    let _navLatencySamples = [];
+    let _pendingNavAt = 0;
 
     let _watchdogTimer = null;
     let _urlChangedSincePending = false;
@@ -35,6 +47,21 @@ const Navigator = (() => {
         if (location.href !== _lastSeenHref) {
             _lastSeenHref = location.href;
             _urlChangedSincePending = true;
+            // Đo latency thực tế của lần SPA nav vừa xảy ra (chỉ tính khi có
+            // 1 lần goTo() đang chờ xác nhận — tránh lẫn với nav tự nhiên do
+            // user tự bấm link/back-forward không qua goTo()).
+            if (_pendingNavAt > 0) {
+                const latency = Date.now() - _pendingNavAt;
+                _pendingNavAt = 0;
+                if (latency > 0 && latency < WATCHDOG_MS_INITIAL) {
+                    _navLatencySamples.push(latency);
+                    if (_navLatencySamples.length > 8) _navLatencySamples.shift(); // rolling window, ưu tiên mẫu gần nhất
+                    if (_navLatencySamples.length >= WATCHDOG_SAMPLES_NEEDED) {
+                        const avg = _navLatencySamples.reduce((a, b) => a + b, 0) / _navLatencySamples.length;
+                        _watchdogMs = Math.max(WATCHDOG_FLOOR_MS, Math.round(avg * WATCHDOG_SAMPLE_MARGIN));
+                    }
+                }
+            }
         }
     }
     // 'yt-navigate-finish' là tín hiệu đáng tin cậy nhất (SPA router của
@@ -53,11 +80,38 @@ const Navigator = (() => {
 
     function _clearWatchdog() {
         if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
+        _pendingNavAt = 0;
     }
 
     function _hardNavigate(url) {
         log('[Navigator] SPA nav không xảy ra kịp thời, fallback hard reload:', url);
         window.location.href = url;
+    }
+
+    /**
+     * Tạo <a> ẩn và click để kích hoạt SPA router của YouTube.
+     * QUAN TRỌNG: trước đây dùng `anchor.style.display = 'none'` — điều này
+     * khiến `offsetParent` của anchor luôn là `null` (không có bounding box
+     * thật). Một số handler click nội bộ của YouTube (heuristic lọc click
+     * giả lập/bot) có thể bỏ qua target không có layout thật, khiến SPA nav
+     * KHÔNG BAO GIỜ xảy ra và watchdog luôn fallback về hard reload — đúng
+     * triệu chứng "navigate link Youtube thì mượt, còn script mình thì cứ
+     * reload". Sửa: dùng position:fixed + kích thước 1x1 + opacity gần 0 để
+     * anchor có bounding box thật (offsetParent hợp lệ) nhưng vẫn hoàn toàn
+     * vô hình. Đồng thời dùng `anchor.click()` (method chuẩn, tự điền đủ
+     * property của 1 click thật) thay vì tự dựng `new MouseEvent(...)`, và
+     * gỡ anchor ở tick sau thay vì đồng bộ ngay — phòng router xử lý click
+     * bất đồng bộ (rAF/microtask) rồi mới đọc lại target.
+     */
+    function _dispatchSpaClick(url) {
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1;';
+        anchor.rel = 'noopener';
+        anchor.tabIndex = -1;
+        document.body.appendChild(anchor);
+        anchor.click();
+        setTimeout(() => anchor.remove(), 0);
     }
 
     /**
@@ -83,27 +137,25 @@ const Navigator = (() => {
 
         let anchor;
         _urlChangedSincePending = false; // reset TRƯỚC dispatch — SPA router có thể xử lý đồng bộ
+        _pendingNavAt = Date.now();
         try {
-            anchor = document.createElement('a');
-            anchor.href = url;
-            anchor.style.display = 'none';
-            anchor.rel = 'noopener'; // không mở tab mới, không ảnh hưởng ngoài dự kiến
-            document.body.appendChild(anchor);
-            anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            _dispatchSpaClick(url);
         } catch (err) {
             warn('[Navigator] Lỗi khi tạo SPA nav click, fallback hard reload:', err);
+            _pendingNavAt = 0;
             _hardNavigate(url);
             return;
-        } finally {
-            if (anchor?.isConnected) anchor.remove();
         }
 
         // Watchdog: xác nhận SPA nav thực sự đã xảy ra trong thời gian hợp lý;
-        // nếu không, coi như thất bại và tự cứu bằng hard reload.
+        // nếu không, coi như thất bại và tự cứu bằng hard reload. Thời lượng
+        // tự thu hẹp dần về sát độ trễ SPA nav thực đo được (xem
+        // _onUrlChangeSignal) sau vài lần nav thành công đầu tiên.
         _watchdogTimer = setTimeout(() => {
             _watchdogTimer = null;
+            _pendingNavAt = 0;
             if (!_urlChangedSincePending) _hardNavigate(url);
-        }, WATCHDOG_MS);
+        }, _watchdogMs);
     }
 
     /**

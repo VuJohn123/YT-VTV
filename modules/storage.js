@@ -209,6 +209,36 @@ const Storage = (() => {
         );
     }
 
+    // ─── Episode list cache (L2 — sống sót qua hard reload) ───────────────────
+    // EpisodeEngine đã có cache trong RAM (_listCache, mất khi trang reload).
+    // Danh sách này là kết quả SAU dedup + SeriesLearner matching + search —
+    // build lại tốn nhiều lệnh Search.search() song song. Persist ra GM storage
+    // để hard-reload (fallback của Navigator khi SPA nav thất bại, hoặc user
+    // F5 tay) không phải trả giá build lại từ đầu — chỉ VirtualPlaylist cache
+    // (dữ liệu thô) được persist trước đây, còn list ĐÃ XỬ LÝ thì chưa.
+    const EP_LIST_CACHE_TTL = 10 * 60_000; // đồng bộ với TTL cache RAM trong episode-navigator.js
+
+    function getEpisodeListCache(seriesKey) {
+        const raw = GM_getValue('vtvUlt_eplist_' + seriesKey.replace(/\s+/g, '_'), null);
+        if (!raw) return null;
+        try {
+            const data = JSON.parse(raw);
+            if (Date.now() - data.timestamp < EP_LIST_CACHE_TTL) return data.list;
+            return null;
+        } catch (e) { return null; }
+    }
+
+    function saveEpisodeListCache(seriesKey, list) {
+        GM_setValue(
+            'vtvUlt_eplist_' + seriesKey.replace(/\s+/g, '_'),
+            JSON.stringify({ list, timestamp: Date.now() })
+        );
+    }
+
+    function clearEpisodeListCache(seriesKey) {
+        GM_deleteValue('vtvUlt_eplist_' + seriesKey.replace(/\s+/g, '_'));
+    }
+
     // ─── Series learner data (thống kê từ đặc trưng học được từ description) ──
     // Không có TTL — dữ liệu học càng lâu càng chính xác, không nên tự hết hạn
     // như cache thông thường (khác VirtualPlaylist cache vốn cần refresh định kỳ
@@ -264,11 +294,12 @@ const Storage = (() => {
         getSeries, saveSeries, clearSeries,
         getHistory, addToHistory, getAllHistory,
         getSkipData, learnSkip,
-        addStats, getProgress,
+        addStats, getStats, getProgress,
         getLastPosition, saveLastPosition, clearLastPosition,
         addToWatchLater, getWatchLater,
         getNotes, addNote,
         getVirtualPlaylistCache, saveVirtualPlaylistCache,
+        getEpisodeListCache, saveEpisodeListCache, clearEpisodeListCache,
         getLearnedData, saveLearnedData,
         getUIPrefs, saveUIPrefs,
         getFeatureFlags, saveFlag,

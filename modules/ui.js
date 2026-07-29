@@ -11,6 +11,17 @@ GM_addStyle(`
     position: fixed;
     bottom: 24px; right: 24px;
     width: 320px;
+    max-width: calc(100vw - 48px);
+    /* Trước đây panel không có giới hạn chiều cao tổng thể — trên viewport
+       thấp (cửa sổ nhỏ, DevTools mở, laptop màn hình thấp...) nội dung dài
+       (danh sách tập thiếu, cảnh báo...) đẩy panel tràn lên TRÊN mép màn
+       hình (vì neo bottom:24px, panel phình lên trên khi nội dung dài),
+       bị trình duyệt cắt mất phần trên mà không có cách nào cuộn tới. Giới
+       hạn max-height theo viewport + cho phép cuộn nội bộ ở #vtv-body bên
+       dưới để nội dung luôn nằm gọn trong màn hình bất kể kích thước. */
+    max-height: calc(100vh - 48px);
+    display: flex;
+    flex-direction: column;
     background: rgba(15, 15, 20, 0.88);
     backdrop-filter: blur(18px) saturate(160%);
     -webkit-backdrop-filter: blur(18px) saturate(160%);
@@ -40,6 +51,7 @@ GM_addStyle(`
     cursor: grab;
     border-bottom: 1px solid rgba(255,255,255,0.06);
     background: rgba(255,255,255,0.03);
+    flex-shrink: 0;
 }
 #vtv-header:active { cursor: grabbing; }
 
@@ -67,8 +79,11 @@ GM_addStyle(`
 /* ── Collapsible body ───────────────────────────────────────────────────── */
 #vtv-body {
     max-height: 600px;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0; /* bắt buộc để flex child cho phép co lại nhỏ hơn content, kích hoạt scroll thay vì tràn */
     transition: max-height .3s cubic-bezier(.4,0,.2,1);
+    scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent;
 }
 #vtv-inner { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
 

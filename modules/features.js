@@ -6,8 +6,12 @@
 // ADBLOCK
 // ─────────────────────────────────────────────────────────────────────────────
 const AdBlock = (() => {
-    let _observer   = null;
-    let _interval   = null;
+    let _observer     = null;
+    let _skipObserver = null;
+    let _interval     = null;
+    let _wasAd              = false;
+    let _userMutedBeforeAd  = false;
+    let _classSignalConfirmed = false; // đã từng thấy class ad-showing hoạt động trong session này chưa
 
     const AD_SELECTORS = [
         'ytd-display-ad-renderer', 'ytd-ad-slot-renderer', 'ytd-in-feed-ad-layout-renderer',
@@ -20,8 +24,51 @@ const AdBlock = (() => {
         'iframe[src*="doubleclick"]', 'iframe[src*="googleads"]', 'iframe[src*="adservice"]',
     ].join(',');
 
+    // Tín hiệu ad-state đáng tin cậy nhất: YouTube tự gắn class này lên
+    // player container (.html5-video-player) khi ĐANG phát quảng cáo — dùng
+    // rộng rãi bởi các extension chặn QC lớn (SponsorBlock, uBlock Origin
+    // annotations...). Đáng tin hơn NHIỀU so với heuristic "duration < 30s"
+    // cũ (heuristic cũ false-positive trên bất kỳ clip hợp lệ nào ngắn hơn
+    // 30s — trailer, teaser, đoạn preview phim...).
+    const AD_PLAYER_SELECTOR = '.html5-video-player.ad-showing, .html5-video-player.ad-interrupting';
+
+    function _isAdShowingByClass() {
+        return !!document.querySelector(AD_PLAYER_SELECTOR);
+    }
+
+    /**
+     * Ưu tiên tín hiệu class nếu đã từng xác nhận nó hoạt động trong session
+     * này. Chỉ fallback về heuristic duration cũ khi class CHƯA TỪNG xuất
+     * hiện — graceful degradation cho trường hợp hiếm YouTube đổi tên class
+     * hoặc theme khác không set class này (không có cách nào biết trước, nên
+     * không thể loại bỏ hoàn toàn fallback).
+     */
+    function _checkAdState() {
+        const classSignal = _isAdShowingByClass();
+        if (classSignal) _classSignalConfirmed = true;
+
+        if (_classSignalConfirmed) return classSignal;
+
+        const v = VideoContext.getVideoEl();
+        return v?.duration > 0 && v.duration < AD_MAX_DURATION;
+    }
+
     function _hideAds() {
         document.querySelectorAll(AD_SELECTORS).forEach(el => { el.style.display = 'none'; });
+    }
+
+    // MutationObserver trên document.body (subtree:true) bắt được TẤT CẢ thay
+    // đổi DOM trên trang — mà YouTube liên tục render lại (progress bar tick,
+    // live chat, related videos lazy-load...). Gọi thẳng _hideAds() (quét 18
+    // selector trên toàn document) mỗi lần callback bắn là 1 nguồn perf thật
+    // gây giật/chậm. Coalesce nhiều lần bắn liên tiếp thành 1 lần quét duy
+    // nhất mỗi animation frame bằng rAF — vẫn phản ứng gần như tức thời với
+    // mắt người, nhưng giảm hẳn số lần querySelectorAll khi DOM churn nhiều.
+    let _hideAdsScheduled = false;
+    function _scheduleHideAds() {
+        if (_hideAdsScheduled) return;
+        _hideAdsScheduled = true;
+        requestAnimationFrame(() => { _hideAdsScheduled = false; _hideAds(); });
     }
 
     function _skipAdButtons() {
@@ -37,30 +84,71 @@ const AdBlock = (() => {
         }
     }
 
+    // Trước đây nút Skip chỉ được bấm mỗi 2s (theo interval chính) — nghĩa là
+    // trung bình chờ ~1s, tối đa 2s sau khi nút thật sự xuất hiện mới được
+    // click, cảm giác trễ. Quan sát riêng player container (nhỏ hơn nhiều so
+    // với toàn document.body) bằng MutationObserver để bấm skip NGAY khi nút
+    // xuất hiện — vẫn giữ interval 2s làm lưới an toàn dự phòng.
+    let _skipCheckScheduled = false;
+    function _scheduleSkipCheck() {
+        if (_skipCheckScheduled) return;
+        _skipCheckScheduled = true;
+        requestAnimationFrame(() => { _skipCheckScheduled = false; _skipAdButtons(); });
+    }
+
+    function _watchSkipButton() {
+        if (_skipObserver) return;
+        const player = document.querySelector('.html5-video-player');
+        if (!player) return; // thử lại ở interval poll tiếp theo nếu player chưa render kịp
+        _skipObserver = new MutationObserver(_scheduleSkipCheck);
+        _skipObserver.observe(player, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    }
+
     function start() {
         if (_observer) return;
         log('[AdBlock] start');
+        _wasAd = false;
+        _classSignalConfirmed = false;
         _interval = setInterval(() => {
             try {
                 _skipAdButtons();
-                // Fast-forward short ad videos
-                const v = VideoContext.getVideoEl();
-                if (v?.duration > 0 && v.duration < AD_MAX_DURATION) {
+                _watchSkipButton(); // retry gắn observer nếu lần trước player chưa sẵn sàng
+
+                const isAd = _checkAdState();
+                if (isAd) {
+                    if (!_wasAd) {
+                        // Mute ngay khi MỚI phát hiện quảng cáo — tránh giật âm
+                        // thanh trước khi seek-to-end kịp xử lý. Nhớ trạng thái
+                        // mute gốc của user để khôi phục đúng, không tự ý bật
+                        // tiếng nếu user vốn đã tắt tiếng từ trước.
+                        _userMutedBeforeAd = PlayerControl.isMuted();
+                        if (!_userMutedBeforeAd) PlayerControl.mute();
+                        _wasAd = true;
+                    }
                     EventBus.emit('adDetected', { detected: true });
-                    PlayerControl.seekTo(v.duration - 0.1);
+                    const v = VideoContext.getVideoEl();
+                    if (v?.duration > 0) PlayerControl.seekTo(v.duration - 0.1);
                 } else {
+                    if (_wasAd) {
+                        if (!_userMutedBeforeAd) PlayerControl.unmute();
+                        _wasAd = false;
+                    }
                     EventBus.emit('adDetected', { detected: false });
                 }
             } catch (e) {}
         }, 2000);
-        _observer = new MutationObserver(_hideAds);
+        _observer = new MutationObserver(_scheduleHideAds);
         _observer.observe(document.body, { childList: true, subtree: true });
+        _watchSkipButton();
         _hideAds();
     }
 
     function stop() {
         if (_interval) { clearInterval(_interval); _interval = null; }
         if (_observer) { _observer.disconnect(); _observer = null; }
+        if (_skipObserver) { _skipObserver.disconnect(); _skipObserver = null; }
+        if (_wasAd && !_userMutedBeforeAd) PlayerControl.unmute(); // đừng để kẹt mute nếu tắt AdBlock giữa lúc đang có quảng cáo
+        _wasAd = false;
     }
 
     // Marathon mode toggle drives adblock
@@ -462,11 +550,67 @@ const VoiceControl = (() => {
      * @param {string} pattern - phần bên trong (...) của regex, ví dụ 'dừng|tạm dừng|pause'
      * @returns {RegExp}
      */
+    /**
+     * Compile 1 lần, cache theo pattern string. Trước đây mỗi `_re('...')`
+     * gọi trong `_processCommand` tạo `new RegExp` mới — với ~50 nhánh
+     * if trong hàm, MỖI câu lệnh voice compile lại gần 50 regex dù pattern
+     * không đổi giữa các lần gọi. Cache giúp chỉ compile 1 lần cho session,
+     * các lần sau chỉ tra Map (O(1)).
+     */
+    const _reCache = new Map();
     function _re(pattern) {
-        return new RegExp(`(?<![\\p{L}\\p{N}])(?:${pattern})(?![\\p{L}\\p{N}])`, 'iu');
+        let re = _reCache.get(pattern);
+        if (!re) {
+            re = new RegExp(`(?<![\\p{L}\\p{N}])(?:${pattern})(?![\\p{L}\\p{N}])`, 'iu');
+            _reCache.set(pattern, re);
+        }
+        return re;
     }
 
-    function _processCommand(raw, fallbackAlternatives = []) {
+    // ── Levenshtein fuzzy fallback cho từ khóa lệnh cốt lõi ────────────────────
+    // Danh sách CÓ CHỦ Ý rất ngắn và chỉ gồm từ đủ dài để phân biệt rõ ràng —
+    // test thực tế cho thấy từ khóa ngắn (2-3 ký tự như "đề", "phụ", "lùi")
+    // dễ trùng khoảng cách với nhiều từ tiếng Việt khác hoàn toàn không liên
+    // quan, gây SỬA NHẦM câu đúng thành lệnh sai (nguy hiểm hơn cả việc báo
+    // "không nhận diện được", vì hành động sai xảy ra ÂM THẦM). Chỉ nhận khi:
+    //   - distance đúng bằng 1 (không dùng 2 — quá lỏng, gây nhầm)
+    //   - độ dài từ trong câu lệch tối đa 1 ký tự so với từ khóa
+    //   - CHỈ ĐÚNG 1 từ khóa đạt điều kiện (nếu 2 từ khóa cùng đạt → mơ hồ, bỏ qua)
+    const CORE_KEYWORDS = ['phát', 'dừng', 'tiếp', 'lặp'];
+
+    function _levenshtein(a, b) {
+        const m = a.length, n = b.length;
+        if (m === 0) return n;
+        if (n === 0) return m;
+        let prev = Array.from({ length: n + 1 }, (_, j) => j);
+        for (let i = 1; i <= m; i++) {
+            const cur = [i];
+            for (let j = 1; j <= n; j++) {
+                cur[j] = a[i - 1] === b[j - 1]
+                    ? prev[j - 1]
+                    : 1 + Math.min(prev[j - 1], prev[j], cur[j - 1]);
+            }
+            prev = cur;
+        }
+        return prev[n];
+    }
+
+    /** Sửa từng từ trong câu về từ khóa cốt lõi nếu khớp mờ RÕ RÀNG (xem điều kiện ở trên). Trả về null nếu không có gì để sửa. */
+    function _fuzzyCorrectCoreKeywords(text) {
+        const words = text.split(' ');
+        let changed = false;
+        const out = words.map(w => {
+            if (CORE_KEYWORDS.includes(w)) return w; // đã khớp chính xác
+            const matches = CORE_KEYWORDS.filter(kw =>
+                Math.abs(w.length - kw.length) <= 1 && _levenshtein(w, kw) === 1
+            );
+            if (matches.length === 1) { changed = true; return matches[0]; } // chỉ sửa khi KHÔNG mơ hồ
+            return w;
+        });
+        return changed ? out.join(' ') : null;
+    }
+
+    function _processCommand(raw, fallbackAlternatives = [], fuzzyApplied = false) {
         // Normalize: lowercase, chuẩn hoá số thập phân kiểu VN (1,5 → 1.5)
         // TRƯỚC khi xoá dấu câu, rồi mới xoá phần còn lại. Thứ tự này quan
         // trọng: xoá dấu phẩy trước khi xử lý sẽ biến "1,5" thành "15" (sai
@@ -891,7 +1035,22 @@ const VoiceControl = (() => {
         if (fallbackAlternatives.length > 0) {
             const [next, ...rest] = fallbackAlternatives;
             log('[Voice] alternative đầu không match, thử:', next);
-            return _processCommand(next, rest);
+            return _processCommand(next, rest, fuzzyApplied);
+        }
+
+        // Lớp cuối cùng: sửa lỗi mờ (Levenshtein) cho từ khóa lệnh CỐT LÕI bị
+        // nghe nhầm ("phát"→"phà", vv.) rồi xử lý lại câu ĐÃ SỬA — chỉ 1 lần
+        // (chặn bằng fuzzyApplied để không đệ quy vô hạn nếu câu sửa vẫn
+        // không khớp lệnh nào). GIỚI HẠN THẬT: chỉ bắt được lỗi nghe gần
+        // đúng về MẶT CHỮ VIẾT (khoảng cách sửa nhỏ) — không bắt được nghe
+        // sai hoàn toàn về âm mà chữ viết khác hẳn (vd "tắt"→"chip" không có
+        // điểm chung nào về ký tự dù tai người có thể thấy gần âm).
+        if (!fuzzyApplied) {
+            const fixed = _fuzzyCorrectCoreKeywords(t);
+            if (fixed && fixed !== t) {
+                log('[Voice] fuzzy-correct:', JSON.stringify(t), '→', JSON.stringify(fixed));
+                return _processCommand(fixed, [], true);
+            }
         }
 
         log('[Voice] unrecognized command:', t);

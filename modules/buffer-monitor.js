@@ -14,17 +14,26 @@ const BufferMonitor = (() => {
     const WINDOW_MS = 30_000;
     const WAITING_THRESHOLD = 3;
     const COOLDOWN_MS = 60_000;
+    // Trước đây chỉ giảm quality, KHÔNG BAO GIỜ tự nâng lại — user bị kẹt ở
+    // mức thấp vĩnh viễn dù mạng đã ổn định trở lại, phải tự vào Settings đổi
+    // tay. Thêm: nếu không buffer suốt UPGRADE_STABLE_MS, thử nâng lại 1 bậc.
+    const UPGRADE_STABLE_MS   = 3 * 60_000; // 3 phút không buffer coi là mạng đã ổn
+    const UPGRADE_CHECK_MS    = 30_000;     // tần suất kiểm tra điều kiện nâng lại
 
     const QUALITY_LADDER = ['highres', 'hd1440', 'hd1080', 'hd720', 'large', 'medium', 'small', 'tiny'];
 
     let _waitingTimestamps = [];
     let _lastDowngradeAt = 0;
+    let _lastWaitingAt = 0;
+    let _downgradeSteps = 0; // số bậc TỰ hạ — chỉ nâng lại trong phạm vi này, không bao giờ vượt mức trước khi mình can thiệp (tôn trọng lựa chọn thủ công của user)
+    let _upgradeTimer = null;
     let _enabled = false;
     let _attachedVideoEl = null;
 
     function _onWaiting() {
         if (!_enabled) return;
         const now = Date.now();
+        _lastWaitingAt = now;
         _waitingTimestamps.push(now);
         _waitingTimestamps = _waitingTimestamps.filter(t => now - t < WINDOW_MS);
 
@@ -45,9 +54,41 @@ const BufferMonitor = (() => {
         const target = QUALITY_LADDER[idx + 1];
         const ok = PlayerControl.setQuality(target);
         if (ok) {
-            log('[BufferMonitor] Buffering liên tục, tự giảm chất lượng:', current, '→', target);
+            _downgradeSteps++;
+            log('[BufferMonitor] Buffering liên tục, tự giảm chất lượng:', current, '→', target, `(đã hạ ${_downgradeSteps} bậc)`);
             EventBus.emit('voiceLabel', { text: `📉 Giảm chất lượng xuống ${target} do mạng chậm` });
+            _scheduleUpgradeCheck();
         }
+    }
+
+    /** Thử nâng lại 1 bậc nếu mạng đã ổn định đủ lâu — chỉ nâng trong phạm vi đã tự hạ, không đụng tới lựa chọn quality gốc của user. */
+    function _tryUpgrade() {
+        if (!_enabled || _downgradeSteps <= 0) return;
+        const now = Date.now();
+        if (now - _lastWaitingAt < UPGRADE_STABLE_MS) return;   // vẫn còn buffer gần đây, chưa đủ ổn định
+        if (now - _lastDowngradeAt < UPGRADE_STABLE_MS) return; // vừa mới hạ xong, đợi thêm trước khi thử nâng
+
+        const current = PlayerControl.getQuality();
+        if (!current) return;
+        const idx = QUALITY_LADDER.indexOf(current);
+        if (idx <= 0) return;
+
+        const target = QUALITY_LADDER[idx - 1];
+        const ok = PlayerControl.setQuality(target);
+        if (ok) {
+            _downgradeSteps--;
+            _lastDowngradeAt = now; // dùng chung mốc thời gian để tránh nâng liên tục dồn dập nếu vẫn còn chập chờn
+            log('[BufferMonitor] Mạng ổn định trở lại, tự nâng chất lượng:', current, '→', target, `(còn ${_downgradeSteps} bậc đã hạ)`);
+            EventBus.emit('voiceLabel', { text: `📈 Mạng ổn định, nâng chất lượng lên ${target}` });
+        }
+    }
+
+    function _scheduleUpgradeCheck() {
+        if (_upgradeTimer) return;
+        _upgradeTimer = setInterval(() => {
+            if (!_enabled || _downgradeSteps <= 0) { clearInterval(_upgradeTimer); _upgradeTimer = null; return; }
+            _tryUpgrade();
+        }, UPGRADE_CHECK_MS);
     }
 
     function _attach() {
@@ -55,6 +96,10 @@ const BufferMonitor = (() => {
         if (!v || v === _attachedVideoEl) return;
         _attachedVideoEl = v;
         v.addEventListener('waiting', _onWaiting);
+        // Tập mới → YouTube tự set lại quality mặc định, state "đã hạ mấy bậc"
+        // của tập cũ không còn ý nghĩa, tránh nâng/hạ nhầm dựa trên counter cũ.
+        _downgradeSteps = 0;
+        _waitingTimestamps = [];
     }
 
     function enable() {
@@ -67,6 +112,7 @@ const BufferMonitor = (() => {
     function disable() {
         _enabled = false;
         _waitingTimestamps = [];
+        if (_upgradeTimer) { clearInterval(_upgradeTimer); _upgradeTimer = null; }
     }
 
     function isEnabled() { return _enabled; }
