@@ -29,6 +29,8 @@ const VirtualPlaylist = (() => {
                         title:      pr.title?.simpleText || '',
                         playlistId: pr.playlistId,
                         videoCount: parseInt(pr.videoCount) || 0,
+                        channelName: pr.shortBylineText?.runs?.[0]?.text || '',
+                        channelId:   pr.shortBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || null,
                     });
                 }
             }
@@ -156,6 +158,13 @@ const VirtualPlaylist = (() => {
         const nameHint = seriesName.toLowerCase().trim();
         const playlists = rawPlaylists
             .filter(pl => pl.videoCount >= 2 && pl.title && pl.title.toLowerCase().includes(nameHint.split(' ')[0]))
+            // FIX BUG THẬT (cùng nguyên nhân với episode-navigator.js): trước
+            // đây không verify playlist thuộc kênh nào — 1 playlist "sưu tầm"
+            // do kênh KHÁC (đọc truyện audio, reup...) đặt tên trùng series vẫn
+            // được ingest, khiến video từ kênh lạ lọt vào danh sách tập và có
+            // thể bị auto-navigate tới. Bỏ qua playlist KHÔNG lấy được channelId
+            // (field phụ, có thể thiếu ở 1 số layout YouTube) thay vì chặn nhầm.
+            .filter(pl => !pl.channelId || isVTVChannel(pl.channelName, pl.channelId))
             .sort((a, b) => b.videoCount - a.videoCount)
             .slice(0, MAX_PLAYLISTS_PER_SERIES);
 

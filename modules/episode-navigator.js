@@ -162,6 +162,24 @@ const EpisodeEngine = (() => {
         const _ingest = (videos) => {
             for (const v of videos) {
                 if (!v.videoId) continue;
+
+                // ── FIX BUG THẬT: chặn ứng viên sai kênh TRƯỚC khi accept ──
+                // Trước đây _ingest() chỉ so khớp TIÊU ĐỀ (_seriesMatch) — nếu 1
+                // kênh HOÀN TOÀN KHÁC (vd kênh đọc truyện audio) có video trùng
+                // tên series + đúng định dạng "tập N", nó vẫn được coi là ứng
+                // viên hợp lệ và có thể được auto-navigate tới (ChannelDetect chỉ
+                // verify SAU KHI đã landing ở trang mới — quá trễ, user đã bị kéo
+                // sang kênh lạ). isVTVChannel() (utils.js) dùng CHUNG whitelist
+                // với luồng verify chính, đảm bảo nhất quán 1 nguồn sự thật duy
+                // nhất về "kênh nào được coi là VTV".
+                // Bỏ qua video KHÔNG có channelId lấy được (search.js cũ hơn
+                // hoặc field bị thiếu) — chấp nhận rủi ro nhỏ còn hơn chặn nhầm
+                // toàn bộ kết quả hợp lệ chỉ vì thiếu 1 field phụ.
+                if (v.channelId && !isVTVChannel(v.channelName, v.channelId)) {
+                    log('[EpisodeEngine] Bỏ qua ứng viên sai kênh:', v.channelName, '—', v.title);
+                    continue;
+                }
+
                 const p = parseTitle(v.title || '');
                 if (!p.episode) continue;
 

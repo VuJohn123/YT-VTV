@@ -61,7 +61,17 @@ const Search = (() => {
                         const lengthText = vr.lengthText?.simpleText || '';
                         const description = (vr.detailedMetadataSnippets?.[0]?.snippetText?.runs || [])
                             .map(r => r.text).join('') || '';
-                        if (title && videoId) vids.push({ title, videoId, publishedText, lengthText, description });
+                        // QUAN TRỌNG: trước đây bỏ qua hoàn toàn thông tin kênh của
+                        // kết quả search dù nó có sẵn trong response — đây chính là
+                        // lý do episode-navigator không có cách nào lọc bỏ video từ
+                        // kênh KHÁC dù trùng tên/số tập (chỉ dựa vào tên kênh được
+                        // ghép mềm vào query search, YouTube không đảm bảo lọc đúng
+                        // 100%). Trích xuất ra để lớp trên tự verify trước khi chấp
+                        // nhận 1 video làm ứng viên "tập tiếp theo".
+                        const ownerRun = vr.ownerText?.runs?.[0];
+                        const channelName = ownerRun?.text || '';
+                        const channelId   = ownerRun?.navigationEndpoint?.browseEndpoint?.browseId || null;
+                        if (title && videoId) vids.push({ title, videoId, publishedText, lengthText, description, channelName, channelId });
                     }
                 }
             }
