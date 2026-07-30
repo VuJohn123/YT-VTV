@@ -155,6 +155,22 @@
             if (!UI.panel) UI.init();
             UI.showSearching();
 
+            // 0. Attach NGAY LẬP TỨC (seriesKey=null) — TRƯỚC KHI biết đây có
+            // phải VTV hay không. Trước đây VideoContext.attach() chỉ được
+            // gọi SAU KHI xác nhận VTV + parse được tên tập (bước 7 cũ) —
+            // nghĩa là các tính năng KHÔNG phụ thuộc VTV (PiP, Audio Mode,
+            // Chapter Detector, Buffer Monitor, điều khiển voice cơ bản như
+            // tạm dừng/tua/âm lượng) tuy hiện toggle "đã bật" nhưng KHÔNG BAO
+            // GIỜ thực sự nhận được video để điều khiển nếu đang xem video
+            // không phải VTV hoặc tiêu đề không parse được tên tập — toggle
+            // bật mà vô tác dụng. Gọi attach() 2 lần cho CÙNG 1 video (ở đây
+            // và lại ở bước 7 khi seriesKey thật đã biết) AN TOÀN: attach()
+            // tự _detachListeners() trước khi re-attach nên không tạo listener
+            // trùng; các module nghe 'videoReady' (PiP/AudioMode/WatchParty/
+            // ChapterDetector) đã tự idempotent-check (bỏ qua nếu đã attach
+            // đúng video rồi) nên không bị ảnh hưởng bởi lần attach thứ 2.
+            VideoContext.attach(null, { autoPlay: false, autoSkip: false });
+
             // 1. Resolve channel — pass videoId for per-video dedup
             const videoId = new URLSearchParams(location.search).get('v') || '';
             const channel = await ChannelDetect.resolve(videoId); // {name, id}
@@ -164,7 +180,7 @@
 
             if (!isVTVChannel(channelName, channel.id)) {
                 UI.showWrongChannel(channelName);
-                return;
+                return; // VideoContext vẫn đã attach ở bước 0 — PiP/Audio/Voice/Buffer-monitor vẫn hoạt động bình thường
             }
 
             // 2. Video unavailability
