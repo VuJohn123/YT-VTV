@@ -202,5 +202,40 @@ const HistoryViewer = (() => {
         setTimeout(() => URL.revokeObjectURL(url), 10_000);
     }
 
-    return { open };
+    function _buildErrorLogHtml(entries) {
+        const rows = entries.slice().reverse().map(e => {
+            const time = new Date(e.t).toLocaleString('vi-VN');
+            return `<tr><td class="t">${_escapeHtml(time)}</td><td class="ctx">${_escapeHtml(e.context)}</td><td class="msg">${_escapeHtml(e.message)}</td></tr>`;
+        }).join('') || '<tr><td colspan="3" style="color:#666;text-align:center;padding:20px">Chưa có lỗi nào được ghi lại — tốt đấy!</td></tr>';
+
+        return `<!DOCTYPE html>
+<html lang="vi"><head><meta charset="UTF-8"><title>VTV Ultimate — Log lỗi</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #0f0f0f; color: #eee; padding: 24px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 20px; }
+  .hint { font-size: 12px; color: #999; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #333; font-size: 12px; vertical-align: top; }
+  .t { color: #888; white-space: nowrap; }
+  .ctx { color: #e8a33d; white-space: nowrap; font-family: monospace; }
+  .msg { font-family: monospace; word-break: break-word; }
+</style></head>
+<body>
+  <h1>🐛 Log lỗi — ${entries.length} lỗi gần nhất (tối đa 50)</h1>
+  <div class="hint">Copy nội dung trang này gửi cho dev khi báo lỗi — không cần mở DevTools/Console.</div>
+  <table><thead><tr><th>Thời gian</th><th>Nơi xảy ra</th><th>Nội dung lỗi</th></tr></thead>
+  <tbody>${rows}</tbody></table>
+</body></html>`;
+    }
+
+    function openErrorLog() {
+        const entries = Storage.getErrorLog();
+        const html = _buildErrorLogHtml(entries);
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    }
+
+    return { open, openErrorLog };
 })();

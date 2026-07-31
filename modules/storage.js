@@ -304,6 +304,48 @@ const Storage = (() => {
 
     function saveFlag(key, value) { setGlobal(key, value); }
 
+    // ─── Error log (persistent, capped ring buffer) ────────────────────────────
+    // Trước đây lỗi trong EventBus handler chỉ console.warn — mất ngay khi
+    // đóng DevTools, user không có cách nào tự xem lại để báo cho dev. Giờ
+    // lưu lại 50 lỗi gần nhất, xem qua GM_registerMenuCommand (entry.js).
+    const ERROR_LOG_MAX = 50;
+    function logError(context, message) {
+        // Hàm log KHÔNG BAO GIỜ được phép tự throw — nếu không sẽ che mất lỗi
+        // gốc đang cố log, hoặc gây lỗi mới ngay trong error handler.
+        try {
+            const log = GM_getValue('vtvUlt_errorLog', []);
+            log.push({ t: Date.now(), context, message: String(message).slice(0, 500) });
+            while (log.length > ERROR_LOG_MAX) log.shift();
+            GM_setValue('vtvUlt_errorLog', log);
+        } catch (e) { /* best-effort, im lặng nếu chính việc log cũng lỗi */ }
+    }
+    function getErrorLog()   { return GM_getValue('vtvUlt_errorLog', []); }
+    function clearErrorLog() { GM_setValue('vtvUlt_errorLog', []); }
+
+    // ─── Version migration ──────────────────────────────────────────────────────
+    // 1 nơi DUY NHẤT theo dõi lịch sử thay đổi format dữ liệu — trước đây mỗi
+    // lần đổi format phải vá tạm ngay tại chỗ dùng (ví dụ migration sponsorBlock
+    // flag từng nằm trong entry.js's one-time init) — dồn hết vào đây để dễ
+    // theo dõi, dễ thêm bước mới mà không sợ quên nơi cũ.
+    const CURRENT_SCHEMA_VERSION = 1;
+    function runMigrations() {
+        const last = GM_getValue('vtvUlt_schemaVersion', 0);
+        if (last >= CURRENT_SCHEMA_VERSION) return;
+        log('[Storage] Migrating dữ liệu:', last, '→', CURRENT_SCHEMA_VERSION);
+
+        // 0 → 1: nút "Chặn QC+" (marathon) giờ điều khiển GỘP cả AdBlock lẫn
+        // SponsorBlock (trước đây 2 flag tách biệt) — user đã bật marathon từ
+        // trước khi có tính năng gộp cần được tự động bật luôn sponsorBlock
+        // để không mất tính năng ngầm hiểu là "đã bật" theo UI mới.
+        if (last < 1) {
+            const flags = getFeatureFlags();
+            if (flags.marathon && !flags.sponsorBlock) saveFlag('sponsorBlock', true);
+        }
+
+        GM_setValue('vtvUlt_schemaVersion', CURRENT_SCHEMA_VERSION);
+        log('[Storage] Migration hoàn tất, schema hiện tại:', CURRENT_SCHEMA_VERSION);
+    }
+
     return {
         get, set, del,
         getGlobal, setGlobal,
@@ -320,5 +362,7 @@ const Storage = (() => {
         getLearnedData, saveLearnedData,
         getUIPrefs, saveUIPrefs,
         getFeatureFlags, saveFlag,
+        logError, getErrorLog, clearErrorLog,
+        runMigrations,
     };
 })();

@@ -1,0 +1,9 @@
+{
+  "name": "vtv-giaitri-ultimate",
+  "version": "15.6.0",
+  "private": true,
+  "description": "Test suite cho VTV Giải Trí Ultimate userscript. KHÔNG phải npm package thật — script vẫn chạy 100% qua Tampermonkey (@require), package.json này chỉ để `npm test` chạy tests/ cho tiện, không cần dependency nào.",
+  "scripts": {
+    "test": "node tests/run-all.js"
+  }
+}

@@ -66,7 +66,14 @@ const EventBus = (() => {
         if (!handlers) return;
         for (const h of handlers) {
             try { h(payload); }
-            catch (err) { warn(`[EventBus] handler error on "${event}":`, err); }
+            catch (err) {
+                warn(`[EventBus] handler error on "${event}":`, err);
+                // Lưu lại persistent — trước đây chỉ console.warn, mất ngay khi
+                // đóng DevTools, user không có cách nào tự xem lại lỗi đã xảy
+                // ra để báo cho dev. try/catch lồng thêm vì logError bản thân
+                // KHÔNG được phép làm hỏng luồng emit() đang xử lý dở.
+                try { Storage.logError('EventBus:' + event, err?.message || String(err)); } catch (e) {}
+            }
         }
     }
 

@@ -610,6 +610,15 @@ const VoiceControl = (() => {
         return changed ? out.join(' ') : null;
     }
 
+    /** Parse amount with unit: "30 giây" → 30, "2 phút" → 120, bare "45" → 45. Hàm thuần túy — chuyển lên scope module (từ trong _processCommand) để test được trực tiếp qua _internal. */
+    function _parseAmount(s, defSec = 30) {
+        let m;
+        if ((m = s.match(/(\d+)\s*phút/)))  return +m[1] * 60;
+        if ((m = s.match(/(\d+)\s*giây/)))  return +m[1];
+        if ((m = s.match(/(\d+)/)))          return +m[1];
+        return defSec;
+    }
+
     function _processCommand(raw, fallbackAlternatives = [], fuzzyApplied = false) {
         // Normalize: lowercase, chuẩn hoá số thập phân kiểu VN (1,5 → 1.5)
         // TRƯỚC khi xoá dấu câu, rồi mới xoá phần còn lại. Thứ tự này quan
@@ -653,15 +662,6 @@ const VoiceControl = (() => {
             if ((m = s.match(/(\d+)\s*giây/)))                return +m[1];
             if ((m = s.match(/(\d+)/)))                       return +m[1];
             return null;
-        }
-
-        // Parse amount with unit: "30 giây" → 30, "2 phút" → 120, bare "45" → 45
-        function _parseAmount(s, defSec = 30) {
-            let m;
-            if ((m = s.match(/(\d+)\s*phút/)))  return +m[1] * 60;
-            if ((m = s.match(/(\d+)\s*giây/)))  return +m[1];
-            if ((m = s.match(/(\d+)/)))          return +m[1];
-            return defSec;
         }
 
         // ── 1. NAVIGATION ────────────────────────────────────────────────
@@ -1110,7 +1110,12 @@ const VoiceControl = (() => {
     EventBus.on('voiceStart', start);
     EventBus.on('voiceStop',  stop);
 
-    return { start, stop };
+    // _internal: CHỈ dùng cho automated test (tests/voice-fuzzy.test.js) — expose
+    // các hàm THUẦN TÚY (không side-effect, không đụng DOM/EventBus) để test
+    // trực tiếp code production thay vì phải viết lại logic riêng cho test
+    // (viết lại thì sửa bug ở đây quên sửa bản test vẫn PASS giả). Không ảnh
+    // hưởng hành vi thật — start/stop vẫn là API chính user thực sự dùng.
+    return { start, stop, _internal: { _fuzzyCorrectCoreKeywords, _levenshtein, _re, _parseAmount } };
 })();
 
 
