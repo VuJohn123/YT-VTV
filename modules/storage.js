@@ -288,7 +288,7 @@ const Storage = (() => {
     function getFeatureFlags() {
         return {
             autoPlay:     getGlobal('auto',      true),
-            marathon:     getGlobal('marathon',  false),
+            marathon:     getGlobal('marathon',  true), // "Chặn QC+" giờ mặc định BẬT theo yêu cầu — cùng nhóm với autoPlay/voice/PiP là 4 tính năng lõi cho trải nghiệm xem VTV thuận tiện nhất
             autoSkip:     getGlobal('autoskip',  false),
             voiceEnabled: getGlobal('voice',     true),
             audioMode:    getGlobal('audioMode', false),

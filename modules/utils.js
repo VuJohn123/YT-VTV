@@ -73,6 +73,30 @@ function isVTVChannel(channelName, channelId) {
     return VTV_CHANNEL_PATTERNS.some(p => p.test(channelName));
 }
 
+// ─── Audio-story content detection ─────────────────────────────────────────
+// Dùng cho AudioMode: nếu video là dạng "audio truyện" (chỉ có giọng đọc,
+// hình ảnh tĩnh/không quan trọng), tăng tốc độ phát lên 1.5x an toàn — nghe
+// truyện nhanh hơn dễ theo dõi hơn nhiều so với tua nhanh hội thoại phim/nhạc.
+// CHỦ Ý CHỈ dựa vào tiêu đề, không dùng thêm description hay duration — 2 cái
+// đó cần thêm 1 lượt fetch/khác biệt lớn giữa nhiều loại nội dung, trong khi
+// heuristic tiêu đề đơn giản đã đủ tin cậy cho use-case cụ thể này (nếu sai,
+// hậu quả chỉ là tốc độ không đổi — không có gì bị phá vỡ, an toàn để heuristic
+// lỏng hơn so với channel-filtering ở trên, nơi sai sót có thể auto-navigate
+// user sang kênh lạ).
+const AUDIO_STORY_PATTERNS = [
+    /audio\s*(truyện|full)/i,
+    /(đọc|nghe|kể)\s*truyện/i,
+    /truyện\s*(audio|ma|tâm\s*linh|ngôn\s*tình|teen|đêm\s*khuya)/i,
+    /tiểu\s*thuyết/i,
+    /diễn\s*đọc/i,
+    /truyện\s*full/i,
+    /\btruyện\b.*\b(chương|tập)\s*\d+/i, // "truyện ... chương 12" — định dạng phổ biến của kênh đọc truyện nhiều chương
+];
+function isAudioStoryContent(title) {
+    if (!title) return false;
+    return AUDIO_STORY_PATTERNS.some(p => p.test(title));
+}
+
 // ─── DOM utils ───────────────────────────────────────────────────────────────
 function escapeHTML(s) {
     const d = document.createElement('div');

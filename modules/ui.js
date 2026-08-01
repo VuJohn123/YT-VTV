@@ -227,9 +227,15 @@ GM_addStyle(`
     max-height: 0; overflow: hidden;
     transition: max-height .25s ease;
 }
-/* max-height đủ lớn cho 3 toggle hiện tại; không cần overflow-y auto vì nhóm
-   này chỉ vài item, không phải danh sách dài như list tập. */
-#vtv-adv-wrap.vtv-adv-open #vtv-adv-inner { max-height: 60px; }
+/* Trước đây max-height: 60px — chỉ đủ cho 3 hàng toggle, nhưng
+   #vtv-room-panel/#vtv-tv-panel (mã phòng, nút kết nối, form ghép TV) nằm
+   LỒNG BÊN TRONG #vtv-adv-inner — khi mở "Sync tab"/"TV Mode", nội dung
+   thật sự cần nhiều hơn 60px rất nhiều, bị overflow:hidden cắt gần hết
+   (đúng bug đã báo: layout bị hẹp, nút "Tạo phòng mới" như bị cắt, mã phòng
+   không hiện đủ). Nâng lên đủ rộng cho mọi tổ hợp nội dung; #vtv-body (viền
+   ngoài) đã có overflow-y:auto nên nếu vẫn còn dư sẽ tự cuộn, không tràn ra
+   ngoài màn hình. */
+#vtv-adv-wrap.vtv-adv-open #vtv-adv-inner { max-height: 420px; }
 #vtv-toggles-adv {
     display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
     padding: 4px;

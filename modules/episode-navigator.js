@@ -107,6 +107,8 @@ const EpisodeEngine = (() => {
         // xác định và khác nhau.
         const _seasonCompatible = (a, b) => (a == null || b == null || a === b);
 
+        // _channelEq defined at module scope (dùng chung với findNext/findPrevious)
+
         const _add = (videoId, episode, season, title, url, isCurrent = false, segment = 0, totalSeg = 1, meta = {}) => {
             if (!videoId || seen.has(videoId)) return;
 
@@ -114,6 +116,7 @@ const EpisodeEngine = (() => {
                 videoId, episode, season, title, url, isCurrent, segment, totalSeg,
                 publishedText: meta.publishedText || '',
                 lengthText: meta.lengthText || '',
+                channelName: meta.channelName || '',
                 _seq: typeof meta._seq === 'number' ? meta._seq : undefined,
             };
 
@@ -131,12 +134,32 @@ const EpisodeEngine = (() => {
             }
 
             // Đã có 1 video khác cho đúng tập/segment này (trường hợp nhiều bản
-            // upload trùng tập — ví dụ style title cũ với description khác nhau).
-            // Giữ lại bản MỚI hơn theo thời gian đăng (hoặc thứ tự playlist nếu
-            // không có date). Video hiện tại (isCurrent) luôn được ưu tiên giữ vì
-            // đó là video user đang xem thật.
+            // upload trùng tập — ví dụ style title cũ với description khác nhau,
+            // hoặc 2 kênh VTV khác nhau cùng đăng lại). Giữ lại bản MỚI hơn theo
+            // thời gian đăng, TRỪ KHI 1 trong 2 bản trùng đúng kênh đang xem còn
+            // bản kia thì không — khi đó ưu tiên đúng kênh bất kể ngày đăng, vì
+            // cùng kênh đồng nghĩa cùng định dạng/chất lượng/phong cách encode,
+            // tránh nhảy giữa 2 kênh khác nhau (dù đều hợp lệ VTV) gây khó chịu
+            // cho người xem — đúng vấn đề đã báo: "ưu tiên các tập có cùng
+            // format/kênh, không được như này đâu nó rõ ràng là khác".
             const existing = list[dupIdx];
             if (existing.isCurrent) return; // không thay thế video đang xem
+
+            const existingMatchesChannel = _channelEq(existing.channelName, channel);
+            const entryMatchesChannel    = _channelEq(entry.channelName, channel);
+
+            if (entryMatchesChannel && !existingMatchesChannel) {
+                seen.delete(existing.videoId);
+                seen.add(videoId);
+                if (entry.season == null && existing.season != null) entry.season = existing.season;
+                list[dupIdx] = entry;
+                log('[EpisodeEngine] dup', groupKey, '→ ưu tiên ĐÚNG KÊNH:', title);
+                return;
+            }
+            if (existingMatchesChannel && !entryMatchesChannel) {
+                log('[EpisodeEngine] dup', groupKey, '→ giữ bản đúng kênh, bỏ qua kênh khác:', title);
+                return;
+            }
 
             const cmp = compareVideoRecency(entry, existing);
             if (cmp > 0) {
@@ -201,7 +224,7 @@ const EpisodeEngine = (() => {
                     v.url || `https://youtu.be/${v.videoId}`,
                     false,
                     p.segment || 0, p.totalSeg || 1,
-                    { publishedText: v.publishedText, lengthText: v.lengthText, _seq: v._seq }
+                    { publishedText: v.publishedText, lengthText: v.lengthText, _seq: v._seq, channelName: v.channelName }
                 );
             }
         };
@@ -252,6 +275,18 @@ const EpisodeEngine = (() => {
         return sorted;
     }
 
+    const _channelEq = (a, b) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+    /** Sort ưu tiên: cùng kênh với `channel` lên trước, rồi mới tới segment thấp trước. */
+    function _sortPreferChannel(items, channel, getChannelName, getSegment) {
+        return items.slice().sort((a, b) => {
+            const aMatch = _channelEq(getChannelName(a), channel);
+            const bMatch = _channelEq(getChannelName(b), channel);
+            if (aMatch !== bMatch) return aMatch ? -1 : 1;
+            return getSegment(a) - getSegment(b);
+        });
+    }
+
     // ─── findNext ─────────────────────────────────────────────────────────────
     async function findNext(info, channel, list) {
         const partStr = info.season ? ` - P${info.season}` : '';
@@ -277,9 +312,10 @@ const EpisodeEngine = (() => {
 
         // Case B: next episode from cache
         const nextEp = info.episode + 1;
-        const fromList = list
-            .filter(e => e.episode === nextEp && _seasonMatch(e, info))
-            .sort((a, b) => (a.segment || 0) - (b.segment || 0));
+        const fromList = _sortPreferChannel(
+            list.filter(e => e.episode === nextEp && _seasonMatch(e, info)),
+            channel, e => e.channelName, e => e.segment || 0
+        );
         if (fromList.length) {
             return { url: fromList[0].url, title: fromList[0].title, source: 'cached' };
         }
@@ -302,7 +338,7 @@ const EpisodeEngine = (() => {
         }
 
         if (hits.length) {
-            const chosen = hits.sort((a, b) => (parseTitle(a.title).segment || 0) - (parseTitle(b.title).segment || 0))[0];
+            const chosen = _sortPreferChannel(hits, channel, v => v.channelName, v => parseTitle(v.title).segment || 0)[0];
             return { url: `https://youtu.be/${chosen.videoId}`, title: chosen.title, source: 'search' };
         }
 
@@ -327,10 +363,11 @@ const EpisodeEngine = (() => {
         if (prevEp < 1) return null;
         const partStr = info.season ? ` - P${info.season}` : '';
 
-        // From cache: pick the last segment of prev ep
-        const fromList = list
-            .filter(e => e.episode === prevEp && _seasonMatch(e, info))
-            .sort((a, b) => (b.segment || 0) - (a.segment || 0));
+        // From cache: pick the last segment of prev ep, ưu tiên cùng kênh trước
+        const fromList = _sortPreferChannel(
+            list.filter(e => e.episode === prevEp && _seasonMatch(e, info)),
+            channel, e => e.channelName, e => -(e.segment || 0) // âm để "segment cao nhất" đứng trước sau khi ưu tiên kênh
+        );
         if (fromList.length) {
             return { url: fromList[0].url, title: fromList[0].title, episode: prevEp };
         }
@@ -338,12 +375,13 @@ const EpisodeEngine = (() => {
         // Search fallback
         const q   = Search.mkQuery(`${info.series} tập ${prevEp}${partStr}`, channel);
         const res = await Search.search(q);
-        const hits = res
-            .filter(v => {
+        const hits = _sortPreferChannel(
+            res.filter(v => {
                 const p = parseTitle(v.title);
                 return p.episode === prevEp && _seriesMatch(p, info) && _seasonMatch(p, info);
-            })
-            .sort((a, b) => (parseTitle(b.title).segment || 0) - (parseTitle(a.title).segment || 0));
+            }),
+            channel, v => v.channelName, v => -(parseTitle(v.title).segment || 0)
+        );
 
         if (!hits.length) return null;
         return { url: `https://youtu.be/${hits[0].videoId}`, title: hits[0].title, episode: prevEp };

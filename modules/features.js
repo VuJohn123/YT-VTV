@@ -242,6 +242,21 @@ const AudioMode = (() => {
         if (v && _active) v.classList.add('vtv-audio-mode-hidden');
     }
 
+    /**
+     * Lấy tiêu đề video hiện tại để chạy heuristic audio-truyện — không phụ
+     * thuộc `window._vtvParsedInfo` (chỉ có trên trang VTV) vì AudioMode giờ
+     * hoạt động trên MỌI video YouTube (xem entry.js's VideoContext.attach
+     * sớm). Ưu tiên document.title (luôn có, kể cả trước khi metadata DOM
+     * render xong) — YouTube set document.title = "<tên video> - YouTube".
+     */
+    function _currentVideoTitle() {
+        const h1 = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, h1.title yt-formatted-string');
+        if (h1?.textContent) return h1.textContent.trim();
+        return (document.title || '').replace(/\s*-\s*YouTube$/, '').trim();
+    }
+
+    let _prevRate = null; // tốc độ trước khi Audio Mode tự tăng lên 1.5x cho audio truyện — khôi phục khi tắt
+
     function enable() {
         if (_active) return;
         _active = true;
@@ -254,6 +269,20 @@ const AudioMode = (() => {
 
         const lowest = PlayerControl.getLowestQuality();
         PlayerControl.setQuality(lowest);
+
+        // Nội dung dạng "audio truyện" (chỉ giọng đọc, hình không quan trọng)
+        // → tăng tốc 1.5x an toàn, nghe nhanh hơn dễ theo dõi hơn nhiều so với
+        // tua nhanh phim/nhạc. CHỦ Ý: chỉ áp dụng khi user đã CHỦ ĐỘNG bật
+        // Audio Mode (hành động rõ ràng) — không tự ý đổi tốc độ phát nếu
+        // user chưa yêu cầu audio mode, vì đổi tốc độ là can thiệp lớn hơn
+        // nhiều so với chỉ ẩn hình. Nội dung KHÔNG phải audio truyện (phim,
+        // nhạc, MV...) giữ nguyên tốc độ như bình thường.
+        const title = _currentVideoTitle();
+        if (isAudioStoryContent(title)) {
+            _prevRate = PlayerControl.getRate();
+            PlayerControl.setRate(1.5);
+            log('[AudioMode] Phát hiện nội dung audio truyện — tăng tốc lên 1.5x:', title);
+        }
 
         _initOverlay();
         if (_overlay) _overlay.style.display = 'block';
@@ -283,6 +312,12 @@ const AudioMode = (() => {
         }
         _prevQuality = null;
 
+        // Khôi phục tốc độ phát nếu đã tự tăng lên 1.5x cho audio truyện
+        if (_prevRate != null) {
+            PlayerControl.setRate(_prevRate);
+            _prevRate = null;
+        }
+
         if (_overlay) _overlay.style.display = 'none';
 
         // Xoá class ẩn khỏi video HIỆN TẠI (nếu còn tồn tại — có thể null
@@ -297,8 +332,24 @@ const AudioMode = (() => {
 
     EventBus.on('audioModeEnable',  enable);
     EventBus.on('audioModeDisable', disable);
-    // Re-apply on navigation (quality resets on new video)
-    EventBus.on('videoReady', () => { if (_active) { setTimeout(() => PlayerControl.setQuality(PlayerControl.getLowestQuality()), 800); } });
+    // Re-apply on navigation (quality + audio-truyện detection reset trên video MỚI)
+    EventBus.on('videoReady', () => {
+        if (!_active) return;
+        setTimeout(() => {
+            PlayerControl.setQuality(PlayerControl.getLowestQuality());
+            // Đánh giá lại heuristic audio-truyện cho video MỚI (có thể đổi giữa
+            // các tập — vd tập trước là audio truyện, tập sau lại là phim).
+            const wasBumped = _prevRate != null;
+            const isStory = isAudioStoryContent(_currentVideoTitle());
+            if (isStory && !wasBumped) {
+                _prevRate = PlayerControl.getRate();
+                PlayerControl.setRate(1.5);
+            } else if (!isStory && wasBumped) {
+                PlayerControl.setRate(_prevRate);
+                _prevRate = null;
+            }
+        }, 800);
+    });
 
     return { enable, disable, isActive: () => _active };
 })();
