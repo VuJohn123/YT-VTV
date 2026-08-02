@@ -92,6 +92,28 @@ const PlayerControl = (() => {
 
     function getRate() { return _video()?.playbackRate ?? 1; }
 
+    /**
+     * Đặt playback rate TỰ DO, KHÔNG snap về mốc YouTube UI hỗ trợ (khác
+     * setRate() ở trên — cái đó cố ý snap để đồng bộ UI Settings menu). Dùng
+     * khi user muốn tốc độ v.d 3x, 5x mà YouTube UI không có sẵn.
+     * GIỚI HẠN THẬT (không phải lựa chọn tuỳ ý): Chrome tự MUTE audio khi
+     * playbackRate > 4 (giới hạn cứng của trình duyệt, không có API nào bypass
+     * được) — trên 4x video vẫn chạy nhanh nhưng sẽ CÂM. Clamp tối đa ở 8 để
+     * vẫn cho phép "tốc độ tự do" cao hơn nhiều UI gốc (2x) nhưng cảnh báo rõ
+     * ràng thay vì im lặng để user tự hỏi vì sao mất tiếng.
+     */
+    function setRateExact(rate) {
+        const v = _video();
+        if (!v) return { ok: false };
+        const clamped = Math.max(0.1, Math.min(8, rate));
+        try {
+            const p = _player();
+            if (p?.setPlaybackRate) p.setPlaybackRate(clamped);
+        } catch (e) { /* fall through, vẫn set trực tiếp bên dưới */ }
+        v.playbackRate = clamped;
+        return { ok: true, rate: clamped, audioMuted: clamped > 4 };
+    }
+
     // ─── VOLUME ─────────────────────────────────────────────────────────────
     function setVolume(fraction /* 0..1 */) {
         const v = _video();
@@ -102,6 +124,49 @@ const PlayerControl = (() => {
     }
 
     function getVolume() { return _video()?.volume ?? 1; }
+
+    /**
+     * Boost âm lượng vượt quá 100% chuẩn HTML5 (`<video>.volume` bị trình
+     * duyệt clamp cứng ở 1.0, không có cách nào vượt qua bằng property này —
+     * giới hạn thật của spec, không phải bug). Để thật sự vượt 100%, PHẢI
+     * dùng Web Audio API GainNode (xem audio-graph.js) — đây là kỹ thuật
+     * chuẩn mà các extension "volume booster" thật sự dùng, không phải hack.
+     *
+     * @param {number} percent 0-200 (100 = bình thường, không qua Web Audio API)
+     */
+    function setVolumeBoost(percent) {
+        const v = _video();
+        if (!v) return { ok: false };
+        const clamped = Math.max(0, Math.min(200, percent));
+
+        if (clamped <= 100) {
+            // Không cần Web Audio API cho ≤100% — dùng thẳng <video>.volume,
+            // tránh overhead AudioContext không cần thiết cho case phổ biến
+            // nhất (user không boost). Đưa gain của AudioGraph về 1 nếu đã
+            // từng bật trước đó, tránh boost kép (video.volume × gain).
+            AudioGraph.setGain(1);
+            v.volume = clamped / 100;
+            if (v.volume > 0) v.muted = false;
+            return { ok: true, percent: clamped, usedWebAudio: false };
+        }
+
+        // >100%: cần AudioGraph. v.volume giữ ở 1.0 (không giảm để bù trừ,
+        // gain đảm nhiệm toàn bộ việc boost) — nếu AudioGraph không khả dụng
+        // (trình duyệt cũ, hoặc lỗi tạo graph), fallback về 100% thay vì âm
+        // thầm không làm gì, để user biết giới hạn thật thay vì tưởng đã boost.
+        v.volume = 1; v.muted = false;
+        AudioGraph.attach(v);
+        if (!AudioGraph.isGraphActive()) {
+            return { ok: false, percent: 100, usedWebAudio: false, error: 'Web Audio API không khả dụng trên trình duyệt này' };
+        }
+        AudioGraph.setGain(clamped / 100);
+        return { ok: true, percent: clamped, usedWebAudio: true };
+    }
+
+    function getVolumeBoost() {
+        const gain = AudioGraph.getGain();
+        return Math.round((gain > 1 ? gain : (_video()?.volume ?? 1)) * 100);
+    }
 
     function mute()   { const v = _video(); if (v) v.muted = true;  return !!v; }
     function unmute() { const v = _video(); if (v) v.muted = false; return !!v; }
@@ -208,8 +273,8 @@ const PlayerControl = (() => {
 
     return {
         seekTo, seekBy,
-        setRate, getRate, getAvailableRates,
-        setVolume, getVolume, mute, unmute, isMuted,
+        setRate, getRate, getAvailableRates, setRateExact,
+        setVolume, getVolume, mute, unmute, isMuted, setVolumeBoost, getVolumeBoost,
         setQuality, getQuality, getAvailableQualities, getLowestQuality,
         enterFullscreen, exitFullscreen, toggleFullscreen,
         play, pause, togglePlay,

@@ -42,6 +42,36 @@ const EpisodeEngine = (() => {
         Storage.saveEpisodeListCache(seriesKey, list);
     }
 
+    // ─── Similarity scoring (bag-of-words Jaccard) ─────────────────────────────
+    // "Học máy đơn giản" theo đúng nghĩa: không neural network, không training
+    // — nhưng bag-of-words similarity là kỹ thuật CÓ THẬT trong text
+    // classification cổ điển (trước deep learning), mạnh hơn substring/prefix
+    // match ở chỗ: bền với đảo từ ("Về Nắng Ngày Thương" vẫn khớp "Thương Ngày
+    // Nắng Về"), bền với khoảng trắng/dấu câu thừa, và không bị "gãy" hoàn
+    // toàn chỉ vì 1-2 ký tự đầu khác (khác với prefix-match hiện có). Regex
+    // exact/substring cũ VẪN GIỮ NGUYÊN chạy trước (rẻ hơn, đủ dùng cho phần
+    // lớn trường hợp) — Jaccard chỉ là lớp bổ sung khi 2 cái đó đều thất bại.
+    const MIN_TOKENS_FOR_JACCARD = 2; // tên series quá ngắn (1 từ) dễ false-positive, không áp dụng
+    const JACCARD_THRESHOLD = 0.5;
+
+    function _tokenSet(s) {
+        return new Set(
+            (s || '').toLowerCase().normalize('NFC')
+                .replace(/[.,!?;:'"()\[\]…\-–]/g, ' ')
+                .split(/\s+/)
+                .filter(w => w.length >= 2)
+        );
+    }
+
+    function _jaccardSimilarity(a, b) {
+        const setA = _tokenSet(a), setB = _tokenSet(b);
+        if (setA.size < MIN_TOKENS_FOR_JACCARD || setB.size < MIN_TOKENS_FOR_JACCARD) return 0;
+        let intersection = 0;
+        for (const w of setA) if (setB.has(w)) intersection++;
+        const union = setA.size + setB.size - intersection;
+        return union === 0 ? 0 : intersection / union;
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
     function _seriesMatch(parsed, info, description, seriesKey) {
         if (!parsed?.episode) return false;
@@ -58,6 +88,15 @@ const EpisodeEngine = (() => {
             if (a[i] === b[i]) common++; else break;
         }
         if (common >= 6) return true;
+
+        // Bag-of-words similarity — bắt được trường hợp substring/prefix bó
+        // tay: đảo thứ tự từ, viết tắt xen kẽ, dấu câu khác nhau... mà vẫn rõ
+        // ràng là "gần như cùng 1 cụm từ" khi nhìn theo tập hợp từ.
+        const jaccard = _jaccardSimilarity(a, b);
+        if (jaccard >= JACCARD_THRESHOLD) {
+            log('[EpisodeEngine] series match qua Jaccard similarity (', jaccard.toFixed(2), '):', a, '≈', b);
+            return true;
+        }
 
         // Fallback: string match thất bại hoàn toàn (title viết khác hẳn,
         // không có phần chung nào) — thử dùng SeriesLearner (tần suất tên
@@ -435,5 +474,8 @@ const EpisodeEngine = (() => {
     /** Invalidate list cache for a series (e.g. user force-refresh) */
     function invalidateList(seriesKey) { _listCache.delete(seriesKey); Storage.clearEpisodeListCache(seriesKey); }
 
-    return { run, findNext, findPrevious, invalidateList };
+    return {
+        run, findNext, findPrevious, invalidateList,
+        _internal: { _seriesMatch, _jaccardSimilarity },
+    };
 })();

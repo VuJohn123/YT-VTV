@@ -4,14 +4,11 @@
 // Phát hiện các khoảng lặng đủ dài (> MIN_SILENCE_S) để đề xuất làm chapter
 // marker, giúp seek nhanh tới đoạn quan trọng dù YouTube không có chapters gốc.
 //
-// RỦI RO KỸ THUẬT QUAN TRỌNG: createMediaElementSource(video) CHỈ được gọi
-// 1 LẦN DUY NHẤT trên 1 <video> element — gọi lần 2 sẽ throw InvalidStateError.
-// Ngoài ra, một khi gọi hàm này, audio output của <video> bị "cướp" bởi Web
-// Audio API — nếu không nối lại source → destination, video sẽ CÂM HOÀN
-// TOÀN. Cả 2 rủi ro đều được xử lý: dùng WeakMap để nhớ element nào đã có
-// source (tránh gọi lại lần 2), và LUÔN connect source → destination ngay
-// sau khi tạo, song song với nhánh phân tích qua AnalyserNode (không thay thế
-// đường audio gốc, chỉ "nghe ké" qua analyser).
+// AUDIO GRAPH: dùng chung AudioGraph (audio-graph.js) thay vì tự quản lý
+// AudioContext/MediaElementSourceNode riêng — xem comment đầu file đó để biết
+// lý do (Web Audio API chỉ cho tạo source node 1 lần/video, cần 1 chủ sở hữu
+// duy nhất khi có nhiều module cùng cần tap vào audio của video, ví dụ
+// VolumeBooster trong features.js).
 //
 // CHI PHÍ CPU: chạy 1 vòng phân tích mỗi ANALYSIS_INTERVAL_MS qua
 // requestAnimationFrame-throttled interval, không phải mỗi frame — cân bằng
@@ -23,11 +20,7 @@ const ChapterDetector = (() => {
     const ANALYSIS_INTERVAL_MS = 200;
     const MIN_GAP_BETWEEN_CHAPTERS_S = 30; // tránh tạo quá nhiều chapter sát nhau
 
-    // Nhớ những <video> element đã có MediaElementSourceNode, vì gọi
-    // createMediaElementSource() lần 2 trên cùng element sẽ throw exception.
-    const _sourcedElements = new WeakMap();
-
-    let _ctx = null, _analyser = null, _dataArray = null, _pollHandle = null;
+    let _analyser = null, _dataArray = null, _pollHandle = null;
     let _silenceStart = null;
     let _chapters = [];
     let _enabled = false;
@@ -95,30 +88,15 @@ const ChapterDetector = (() => {
         if (!v || !_enabled) return false;
 
         try {
-            if (!_ctx) _ctx = new (window.AudioContext || window.webkitAudioContext)();
-            // AudioContext có thể bị trình duyệt tự suspend nếu enable() được
-            // gọi không từ user gesture trực tiếp (autoplay policy). resume()
-            // là no-op an toàn nếu context đã ở trạng thái running.
-            if (_ctx.state === 'suspended') _ctx.resume().catch(() => {});
-
-            let source = _sourcedElements.get(v);
-            if (!source) {
-                // Element này CHƯA từng có MediaElementSourceNode — an toàn để tạo.
-                source = _ctx.createMediaElementSource(v);
-                _sourcedElements.set(v, source);
-                // QUAN TRỌNG: nối source → destination để giữ nguyên audio ra
-                // loa. Nếu bỏ bước này, video sẽ câm hoàn toàn vì audio output
-                // đã bị Web Audio API "cướp" khỏi luồng mặc định của <video>.
-                source.connect(_ctx.destination);
-            }
-            // else: element này ĐÃ có source từ lần setup trước (ví dụ user
-            // tắt rồi bật lại tính năng mà không đổi tập) — dùng lại, KHÔNG
-            // được gọi createMediaElementSource() lần 2 (sẽ throw).
-
-            _analyser = _ctx.createAnalyser();
-            _analyser.fftSize = 512;
+            // Dùng chung AudioGraph (audio-graph.js) thay vì tự tạo AudioContext/
+            // MediaElementSourceNode riêng — Web Audio API chỉ cho tạo source
+            // node 1 LẦN DUY NHẤT mỗi <video>; nếu VolumeBooster (features.js)
+            // cũng cần tap vào audio của cùng video, tự tạo riêng ở đây sẽ
+            // crash khi cả 2 tính năng cùng bật. AudioGraph là nơi DUY NHẤT sở
+            // hữu source node, cấp AnalyserNode "nghe ké" cho module này.
+            _analyser = AudioGraph.getAnalyserTap(v, 512);
+            if (!_analyser) return false; // trình duyệt không hỗ trợ Web Audio API hoặc lỗi tạo graph
             _dataArray = new Uint8Array(_analyser.fftSize);
-            source.connect(_analyser); // nhánh phụ để phân tích, không ảnh hưởng nhánh chính đã nối destination
 
             if (_pollHandle) clearInterval(_pollHandle);
             _pollHandle = setInterval(_poll, ANALYSIS_INTERVAL_MS);

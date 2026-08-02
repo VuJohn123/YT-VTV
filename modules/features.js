@@ -809,17 +809,45 @@ const VoiceControl = (() => {
         }
         if (_re('âm lượng|volume').test(t)) {
             const m = t.match(/(\d+)/);
-            if (m) { _vol(+m[1] / 100); _notify(`Âm lượng ${m[1]}%`); }
+            if (m) {
+                // Dùng setVolumeBoost thay vì _vol (setVolume) — setVolume bị
+                // trình duyệt clamp cứng ở 100%, "âm lượng 150" trước đây sẽ
+                // âm thầm bị kẹp về 100% mà không báo gì. setVolumeBoost hỗ
+                // trợ tới 200% qua Web Audio API (xem player-control.js).
+                const r = PlayerControl.setVolumeBoost(+m[1]);
+                _notify(r.ok ? `Âm lượng ${r.percent}%${r.usedWebAudio ? ' (boost)' : ''}` : (r.error || 'Không đặt được âm lượng'));
+            }
             return;
         }
         // Percentage shorthand "50 phần trăm"
         if (/(\d+)\s*phần trăm/.test(t)) {
             const m = t.match(/(\d+)\s*phần trăm/);
-            _vol(+m[1] / 100); _notify(`Âm lượng ${m[1]}%`); return;
+            const r = PlayerControl.setVolumeBoost(+m[1]);
+            _notify(r.ok ? `Âm lượng ${r.percent}%${r.usedWebAudio ? ' (boost)' : ''}` : (r.error || 'Không đặt được âm lượng'));
+            return;
         }
 
         // ── 7. PLAYBACK SPEED ─────────────────────────────────────────────
         if (_re('bình thường|tốc độ bình thường|1x|normal speed').test(t)) { _rate(1);    _notify('1x'); return; }
+
+        // "Tốc độ tự do X" — bypass snap-về-mốc-YouTube (setRate ở dưới luôn
+        // snap về tối đa 2x để đồng bộ UI Settings). Kiểm tra TRƯỚC nhánh
+        // "tốc độ X" thường vì cả 2 đều chứa từ "tốc độ" — phải chặn "tự do"
+        // trước để không bị nhánh snap nuốt mất.
+        if (_re('tốc độ tự do|tự do tốc độ|free speed').test(t)) {
+            const m = t.match(/(\d+(?:[.,]\d+)?)/);
+            if (m) {
+                const r = PlayerControl.setRateExact(+m[1].replace(',', '.'));
+                if (r.ok) {
+                    _notify(`Tốc độ tự do ${r.rate}x${r.audioMuted ? ' (⚠️ trên 4x trình duyệt tự tắt tiếng)' : ''}`);
+                } else {
+                    _notify('Không tìm thấy video để đổi tốc độ');
+                }
+            } else {
+                _notify('Nói kèm số, ví dụ "tốc độ tự do 5"');
+            }
+            return;
+        }
 
         // Exact: "tốc độ 1.5" / "1.5x" / "hai lần" — kiểm tra TRƯỚC nhánh
         // "nhanh hơn/tăng tốc" (tương đối, không có số), vì câu như "tăng tốc
