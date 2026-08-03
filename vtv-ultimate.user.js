@@ -2,7 +2,7 @@
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
 // @icon         https://yt3.ggpht.com/vs_RBzRO4Z-OoX2arjzu1A7e7g_RpAMLRXVVkRf07rh1DVaSWNf1HcuSj2MP6v3dsbEtnTgqOZc=s48-c-k-c0x00ffffff-no-rj
-// @version      15.9
+// @version      15.10
 // @description  Tự động điều hướng tập phim VTV Giải Trí — audio ducking cho voice (fix bắt nhầm tiếng video), multi-alternative speech recognition, event-driven PiP chuẩn, gộp SponsorBlock vào AdBlock, Watch Party follow-nav
 // @author       VuJohn123
 // @match        https://www.youtube.com/*

@@ -75,12 +75,18 @@ const AdBlock = (() => {
         const skips = ['.ytp-skip-ad-button', 'button[aria-label*="Skip"]', 'button[aria-label*="Bỏ qua"]'];
         for (const sel of skips) {
             const btn = document.querySelector(sel);
-            if (btn?.offsetParent !== null) { btn.click(); break; }
+            // BUG ĐÃ SỬA: `btn?.offsetParent !== null` khi btn là null sẽ cho
+            // `undefined !== null` → TRUE (optional chaining short-circuit về
+            // undefined, không phải null) — code chạy tiếp vào btn.click()
+            // trên null, crash "Cannot read properties of null (reading
+            // 'click')" mỗi lần _scheduleSkipCheck bắn (rất thường xuyên vì
+            // gắn qua MutationObserver). Phải check btn tồn tại TRƯỚC.
+            if (btn && btn.offsetParent !== null) { btn.click(); break; }
         }
         const vp = document.querySelector('ytd-player');
         if (vp?.shadowRoot) {
             const sb = vp.shadowRoot.querySelector('.ytp-skip-ad-button');
-            if (sb?.offsetParent !== null) sb.click();
+            if (sb && sb.offsetParent !== null) sb.click();
         }
     }
 
@@ -670,6 +676,28 @@ const VoiceControl = (() => {
         return defSec;
     }
 
+    const _notify = (msg) => EventBus.emit('voiceLabel', { text: '✓ ' + msg });
+
+    /**
+     * BUG ĐÃ SỬA: trước đây _notify(requestedValue + 'x') báo lại ĐÚNG số
+     * user yêu cầu, trong khi PlayerControl.setRate() luôn SNAP về mốc gần
+     * nhất YouTube hỗ trợ (tối đa 2x) — "tăng tốc 4x" báo thành công "4x"
+     * nhưng tốc độ THẬT SỰ chỉ 2x, gây hiểu lầm (đúng bug bị bắt được qua
+     * ảnh chụp: log nói 4x, UI "Tốc độ phát" hiện 2). Giờ luôn đọc lại
+     * PlayerControl.getRate() SAU khi set — báo đúng những gì thực sự đang
+     * chạy. Nếu số yêu cầu bị kẹp xuống thấp hơn (snap), gợi ý "tốc độ tự
+     * do" — lệnh KHÔNG bị snap, xem player-control.js. Chuyển lên scope
+     * module (từ trong _processCommand) để test được qua _internal.
+     */
+    function _notifyRateApplied(requested) {
+        const actual = PlayerControl.getRate();
+        if (Math.abs(actual - requested) > 0.01) {
+            _notify(`${actual}x (${requested}x bị giới hạn — nói "tốc độ tự do ${requested}" để vượt qua)`);
+        } else {
+            _notify(`${actual}x`);
+        }
+    }
+
     function _processCommand(raw, fallbackAlternatives = [], fuzzyApplied = false) {
         // Normalize: lowercase, chuẩn hoá số thập phân kiểu VN (1,5 → 1.5)
         // TRƯỚC khi xoá dấu câu, rồi mới xoá phần còn lại. Thứ tự này quan
@@ -700,7 +728,6 @@ const VoiceControl = (() => {
         const _seek   = (s) => PlayerControl.seekTo(s);
         const _vol    = (n) => PlayerControl.setVolume(n);
         const _rate   = (r) => PlayerControl.setRate(r);
-        const _notify = (msg) => EventBus.emit('voiceLabel', { text: '✓ ' + msg });
 
         // Parse time expression: "5 phút 30 giây" / "5:30" / "phút 5" / "30 giây" / "5p30"
         function _parseTime(s) {
@@ -857,22 +884,22 @@ const VoiceControl = (() => {
         {
             const wordMap = { 'nửa': 0.5, 'một': 1, 'một rưỡi': 1.5, 'hai': 2, 'ba': 3 };
             for (const [word, val] of Object.entries(wordMap)) {
-                if (t.includes(word + ' lần') || t.includes(word + 'x')) { _rate(val); _notify(val + 'x'); return; }
+                if (t.includes(word + ' lần') || t.includes(word + 'x')) { _rate(val); _notifyRateApplied(val); return; }
             }
             const m = t.match(/(?:tốc độ|speed)\D*?(\d+(?:\.\d+)?)/);
-            if (m) { _rate(+m[1]); _notify(m[1] + 'x'); return; }
+            if (m) { _rate(+m[1]); _notifyRateApplied(+m[1]); return; }
             const m2 = t.match(/(\d+(?:\.\d+)?)\s*x\b/);
-            if (m2) { _rate(+m2[1]); _notify(m2[1] + 'x'); return; }
+            if (m2) { _rate(+m2[1]); _notifyRateApplied(+m2[1]); return; }
         }
 
         if (_re('nhanh hơn|tăng tốc').test(t)) {
             const m = t.match(/(\d+(?:\.\d+)?)\s*x/);
             const step = m ? +m[1] : PlayerControl.getRate() + 0.25;
-            _rate(step); _notify(step + 'x'); return;
+            _rate(step); _notifyRateApplied(step); return;
         }
         if (_re('chậm hơn|giảm tốc').test(t)) {
             const cur = PlayerControl.getRate();
-            _rate(cur - 0.25); _notify((cur - 0.25).toFixed(2) + 'x'); return;
+            _rate(cur - 0.25); _notifyRateApplied(cur - 0.25); return;
         }
 
         // ── 8. FULLSCREEN ─────────────────────────────────────────────────
@@ -1194,7 +1221,7 @@ const VoiceControl = (() => {
     // trực tiếp code production thay vì phải viết lại logic riêng cho test
     // (viết lại thì sửa bug ở đây quên sửa bản test vẫn PASS giả). Không ảnh
     // hưởng hành vi thật — start/stop vẫn là API chính user thực sự dùng.
-    return { start, stop, _internal: { _fuzzyCorrectCoreKeywords, _levenshtein, _re, _parseAmount } };
+    return { start, stop, _internal: { _fuzzyCorrectCoreKeywords, _levenshtein, _re, _parseAmount, _notifyRateApplied } };
 })();
 
 
