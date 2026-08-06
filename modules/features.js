@@ -121,6 +121,12 @@ const AdBlock = (() => {
                 _watchSkipButton(); // retry gắn observer nếu lần trước player chưa sẵn sàng
 
                 const isAd = _checkAdState();
+                // BUG ĐÃ SỬA: trước đây emit('adDetected', ...) chạy MỖI 2s bất
+                // kể giá trị có đổi hay không — log console bị spam hàng trăm
+                // dòng "adDetected {detected: false}" (đúng như log user báo),
+                // che mất mọi lỗi thật khác trong console. Chỉ emit khi trạng
+                // thái THỰC SỰ đổi (đang không phải ad → thành ad, hoặc ngược
+                // lại) — EventBus vẫn nhận đủ tín hiệu cần thiết, chỉ bớt nhiễu.
                 if (isAd) {
                     if (!_wasAd) {
                         // Mute ngay khi MỚI phát hiện quảng cáo — tránh giật âm
@@ -130,18 +136,26 @@ const AdBlock = (() => {
                         _userMutedBeforeAd = PlayerControl.isMuted();
                         if (!_userMutedBeforeAd) PlayerControl.mute();
                         _wasAd = true;
+                        EventBus.emit('adDetected', { detected: true });
                     }
-                    EventBus.emit('adDetected', { detected: true });
                     const v = VideoContext.getVideoEl();
-                    if (v?.duration > 0) PlayerControl.seekTo(v.duration - 0.1);
-                } else {
-                    if (_wasAd) {
-                        if (!_userMutedBeforeAd) PlayerControl.unmute();
-                        _wasAd = false;
+                    // Tránh seekTo lặp lại vô ích nếu đã ở gần cuối rồi (mỗi
+                    // lần set currentTime, kể cả gần giống giá trị cũ, có thể
+                    // vẫn bắn event 'seeked' — thêm nhiễu log không cần thiết).
+                    if (v?.duration > 0 && (v.duration - v.currentTime) > 0.5) {
+                        PlayerControl.seekTo(v.duration - 0.1);
                     }
+                } else if (_wasAd) {
+                    if (!_userMutedBeforeAd) PlayerControl.unmute();
+                    _wasAd = false;
                     EventBus.emit('adDetected', { detected: false });
                 }
-            } catch (e) {}
+            } catch (e) {
+                // Trước đây catch rỗng — nuốt mọi lỗi âm thầm, có thể che mất
+                // bug thật khác trong vòng lặp này. Giờ log lại để user tự xem
+                // qua menu "🐛 Xem log lỗi" thay vì mất dấu vết hoàn toàn.
+                try { Storage.logError('AdBlock:interval', e?.message || String(e)); } catch (e2) {}
+            }
         }, 2000);
         _observer = new MutationObserver(_scheduleHideAds);
         _observer.observe(document.body, { childList: true, subtree: true });
@@ -230,7 +244,21 @@ const AudioMode = (() => {
                giữa các version). !important vì YouTube's internal player có
                thể tự resize <video> qua ResizeObserver khi container đổi kích
                thước (fullscreen toggle, resize window...), có thể ghi đè lại
-               inline style nếu không dùng !important. */
+               inline style nếu không dùng !important.
+               SỰ THẬT ĐÃ ĐƯỢC KIỂM CHỨNG (đã research qua thảo luận chính
+               thức của CSS Working Group về content-visibility/media): CSS
+               visibility:hidden CHỈ bỏ qua bước COMPOSITING/PAINT (đưa frame
+               đã decode lên màn hình) — KHÔNG dừng việc DECODE video (bước
+               tốn CPU/GPU nhiều nhất, browser vẫn giải mã đầy đủ mọi frame
+               dù không hiển thị). Đây là giới hạn THẬT của kỹ thuật CSS —
+               không có API công khai nào để tắt hẳn video decode mà chỉ giữ
+               audio (muốn làm vậy phải chọn riêng audio-only stream, YouTube
+               không expose qua API ổn định nào, làm liều sẽ dễ vỡ ngang mức
+               rủi ro TV Mode). Phần tiết kiệm CPU/GPU THẬT SỰ đáng kể của
+               Audio Mode đến từ setQuality(lowest) ở enable() bên dưới (giảm
+               độ phân giải → giảm khối lượng dữ liệu decode mỗi frame) — CSS
+               visibility:hidden ở đây chỉ là phần cộng thêm nhỏ (bớt paint),
+               không phải cơ chế chính. */
             video.vtv-audio-mode-hidden {
                 visibility: hidden !important;
                 width: 1px !important;
@@ -300,7 +328,7 @@ const AudioMode = (() => {
         // dùng ở WatchParty/BufferMonitor cho cùng vấn đề.
         EventBus.on('videoReady', _applyHiddenClass);
 
-        log('[AudioMode] TRULY enabled — quality:', lowest, ', video compositing thực sự bị loại bỏ (không chỉ opacity:0)');
+        log('[AudioMode] enabled — quality:', lowest, '(giảm decode load — cơ chế tiết kiệm CPU/GPU chính), video ẩn qua visibility:hidden (bớt compositing, KHÔNG dừng decode — giới hạn thật của CSS, xem comment ở _injectPerfCSS)');
     }
 
     function disable() {
@@ -341,8 +369,23 @@ const AudioMode = (() => {
     // Re-apply on navigation (quality + audio-truyện detection reset trên video MỚI)
     EventBus.on('videoReady', () => {
         if (!_active) return;
+        // Trước đây: setTimeout cứng 800ms rồi mới set quality — luôn chờ đủ
+        // 800ms dù thực tế nhiều lúc YouTube's player đã sẵn sàng sớm hơn
+        // nhiều. Giờ: thử SỚM (200ms — đủ để tránh set quá sớm lúc player
+        // chưa kịp khởi tạo xong cho video mới), rồi TỰ KIỂM TRA xem có
+        // "dính" không, retry nếu chưa (tối đa 3 lần, cách nhau 300ms) — case
+        // phổ biến (player sẵn sàng sớm) cảm giác nhanh hơn nhiều, case hiếm
+        // (player chưa sẵn sàng) vẫn có lưới an toàn thay vì bỏ cuộc luôn.
+        const _tryApplyQuality = (attempt = 0) => {
+            const target = PlayerControl.getLowestQuality();
+            PlayerControl.setQuality(target);
+            if (attempt >= 3) return;
+            setTimeout(() => {
+                if (PlayerControl.getQuality() !== target) _tryApplyQuality(attempt + 1);
+            }, 300);
+        };
         setTimeout(() => {
-            PlayerControl.setQuality(PlayerControl.getLowestQuality());
+            _tryApplyQuality();
             // Đánh giá lại heuristic audio-truyện cho video MỚI (có thể đổi giữa
             // các tập — vd tập trước là audio truyện, tập sau lại là phim).
             const wasBumped = _prevRate != null;
@@ -354,7 +397,7 @@ const AudioMode = (() => {
                 PlayerControl.setRate(_prevRate);
                 _prevRate = null;
             }
-        }, 800);
+        }, 200);
     });
 
     return { enable, disable, isActive: () => _active };
@@ -496,7 +539,13 @@ const VoiceControl = (() => {
         _sr = new SR();
         _sr.lang            = 'vi-VN';
         _sr.continuous      = false;
-        _sr.interimResults  = false;
+        // interimResults=true: hiển thị transcript TẠM THỜI ngay khi đang nói
+        // (trước đây false — màn hình "chết" hoàn toàn cho tới khi Web Speech
+        // API tự phát hiện hết câu, cảm giác trễ dù xử lý lệnh vẫn nhanh).
+        // QUAN TRỌNG: interim KHÔNG được dùng để THỰC THI lệnh (kết quả tạm
+        // có thể còn thay đổi/sai) — chỉ hiển thị cho user thấy mic đang bắt
+        // được giọng, giảm CẢM GIÁC trễ mà không đánh đổi độ chính xác.
+        _sr.interimResults  = true;
         _sr.maxAlternatives = 3; // thử nhiều lựa chọn nhận diện thay vì chỉ 1 — giảm tỷ lệ unrecognized khi audio bị nhiễu (mic bắt lẫn tiếng phim)
         _initialized = true;
 
@@ -508,13 +557,19 @@ const VoiceControl = (() => {
             // audio bị nhiễu — ví dụ tiếng phim lẫn vào mic — alternative đầu
             // đôi khi sai còn alternative thứ 2-3 lại đúng ý user).
             const alternatives = [];
+            let interimText = '';
             for (let i = e.resultIndex; i < e.results.length; i++) {
-                if (!e.results[i].isFinal) continue;
+                if (!e.results[i].isFinal) { interimText = e.results[i][0]?.transcript || interimText; continue; }
                 for (let j = 0; j < e.results[i].length; j++) {
                     alternatives.push(e.results[i][j].transcript);
                 }
             }
-            if (!alternatives.length) return;
+            if (!alternatives.length) {
+                // Chỉ có interim (chưa final) — hiển thị live feedback, KHÔNG
+                // xử lý lệnh (tránh thực thi nhầm trên kết quả còn có thể đổi).
+                if (interimText) EventBus.emit('voiceLabel', { text: '🎤 ' + interimText + '…' });
+                return;
+            }
 
             const primary = alternatives[0].toLowerCase().trim();
             if (!primary || primary.length >= 80) return;
@@ -522,7 +577,7 @@ const VoiceControl = (() => {
             log('[Voice] command:', primary, alternatives.length > 1 ? `(+${alternatives.length - 1} alt)` : '');
             EventBus.emit('voiceLabel', { text: primary });
             _processCommand(primary, alternatives.slice(1));
-            setTimeout(() => EventBus.emit('voiceLabel', { text: '' }), 1500);
+            setTimeout(() => EventBus.emit('voiceLabel', { text: '' }), 1200);
         };
         _sr.onerror = (e) => {
             _stopping = false;

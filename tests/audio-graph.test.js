@@ -1,6 +1,6 @@
 // tests/audio-graph.test.js — test quan trọng nhất: đảm bảo
 // createMediaElementSource KHÔNG bị gọi 2 lần cho cùng 1 video khi cả
-// ChapterDetector VÀ VolumeBoost (qua PlayerControl) cùng cần audio graph —
+// 2 module KHÁC NHAU cùng cần audio graph (vd 1 module phân tích audio +
 // gọi 2 lần sẽ throw InvalidStateError trên trình duyệt thật.
 const { loadModule } = require('./lib/loadModule');
 const { suite, test, run, assertEqual, assertTrue, assertFalse } = require('./lib/tap');
@@ -40,7 +40,7 @@ function makeFakeAudioContext() {
     return { FakeCtx, getCallCount: () => createSourceCallCount };
 }
 
-test('ChapterDetector (analyser tap) + PlayerControl volume boost (gain) trên CÙNG video → chỉ 1 lần createMediaElementSource', () => {
+test('2 consumer khác nhau (analyser tap + volume boost gain) trên CÙNG video → chỉ 1 lần createMediaElementSource', () => {
     global.warn = () => {};
     const { FakeCtx, getCallCount } = makeFakeAudioContext();
     global.window = { AudioContext: FakeCtx };
@@ -48,7 +48,7 @@ test('ChapterDetector (analyser tap) + PlayerControl volume boost (gain) trên C
     const AudioGraph = loadModule('audio-graph.js', 'AudioGraph');
     const fakeVideo = { id: 'video1' };
 
-    // Module A (ChapterDetector) xin analyser tap
+    // Consumer A xin analyser tap (vd 1 module phân tích audio)
     const analyser = AudioGraph.getAnalyserTap(fakeVideo, 512);
     assertTrue(!!analyser, 'Phải trả về analyser hợp lệ');
 

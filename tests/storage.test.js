@@ -46,16 +46,24 @@ test('runMigrations(): idempotent — không ghi đè lựa chọn tay của use
     assertFalse(Storage.getFeatureFlags().sponsorBlock, 'migration không được chạy lại và ghi đè lựa chọn user');
 });
 
-test('saveSuggestedIntro(): không ghi đè introAvg thật đã có (≥3 lần user tự skip)', () => {
+test('learnSkip(): dùng robust average (median), 1 lần tua ngẫu nhiên không liên quan (outlier) KHÔNG kéo lệch introAvg', () => {
     const Storage = freshStorage();
-    Storage.learnSkip('s|1', 1, 92, 1400);
-    Storage.learnSkip('s|1', 2, 90, 1400);
-    Storage.learnSkip('s|1', 3, 88, 1400);
-    const before = Storage.getSkipData('s|1').introAvg;
-    Storage.saveSuggestedIntro('s|1', 300);
-    const after = Storage.getSkipData('s|1');
-    assertEqual(after.introAvg, before, 'introAvg thật không được đụng vào');
-    assertEqual(after.introSuggested, undefined, 'không thêm introSuggested khi đã có introAvg thật');
+    // 4 lần skip intro thật, nhất quán quanh ~90s
+    Storage.learnSkip('s|3', 0, 88, 1400);
+    Storage.learnSkip('s|3', 0, 90, 1400);
+    Storage.learnSkip('s|3', 0, 92, 1400);
+    // 1 lần tua ngẫu nhiên không liên quan (user xem lại đoạn đầu vì lý do khác),
+    // rơi đúng vào khung "trông giống skip intro" nhưng là outlier thật sự (600s)
+    Storage.learnSkip('s|3', 0, 600, 1400);
+    const d = Storage.getSkipData('s|3');
+    assertTrue(d.introAvg < 150, `introAvg phải gần các mẫu THẬT (~90s), không bị outlier 600s kéo lệch — thực tế: ${d.introAvg}`);
+});
+
+test('learnSkip(): giới hạn tối đa 10 mẫu gần nhất (tự thích nghi nếu series đổi định dạng intro)', () => {
+    const Storage = freshStorage();
+    for (let i = 0; i < 15; i++) Storage.learnSkip('s|4', 0, 90 + i, 1400);
+    const d = Storage.getSkipData('s|4');
+    assertEqual(d.intros.length, 10, 'chỉ giữ tối đa 10 mẫu gần nhất');
 });
 
 run();

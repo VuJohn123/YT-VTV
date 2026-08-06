@@ -16,10 +16,16 @@ GM_addStyle(`
        thấp (cửa sổ nhỏ, DevTools mở, laptop màn hình thấp...) nội dung dài
        (danh sách tập thiếu, cảnh báo...) đẩy panel tràn lên TRÊN mép màn
        hình (vì neo bottom:24px, panel phình lên trên khi nội dung dài),
-       bị trình duyệt cắt mất phần trên mà không có cách nào cuộn tới. Giới
-       hạn max-height theo viewport + cho phép cuộn nội bộ ở #vtv-body bên
-       dưới để nội dung luôn nằm gọn trong màn hình bất kể kích thước. */
-    max-height: calc(100vh - 48px);
+       bị trình duyệt cắt mất phần trên mà không có cách nào cuộn tới.
+       FIX LẦN 1 (max-height: calc(100vh - 48px)) tạo ra REGRESSION MỚI: cho
+       phép panel cao tới mức mép trên chỉ cách top màn hình 24px — ĐÈ LÊN
+       đúng vùng chuông thông báo/avatar/tạo video của YouTube (topbar cao
+       ~56-64px, cùng phía phải với panel neo right:24px) — user không bấm
+       được các nút đó nữa khi panel mở rộng đủ cao. Giờ chừa hẳn 96px ở
+       trên — đủ dư so với topbar thật (~64px) mà vẫn giải quyết được bug
+       gốc (nội dung dài vẫn cuộn được trong #vtv-body bên dưới thay vì
+       tràn ra ngoài). */
+    max-height: calc(100vh - 96px);
     display: flex;
     flex-direction: column;
     background: rgba(15, 15, 20, 0.88);
@@ -499,7 +505,6 @@ const UI = (() => {
         { id: 'tog-audio',    flag: 'audioMode',    gm: 'audioMode', icon: '🔇', label: 'Audio'     },
         { id: 'tog-pip',      flag: 'pipEnabled',   gm: 'pip',       icon: '🖼',  label: 'PiP'       },
         { id: 'tog-wp',       flag: 'watchParty',   gm: 'watchParty', icon: '🔗', label: 'Sync tab (cùng máy)', advanced: true }, // Chỉ đồng bộ giữa các tab CÙNG máy/CÙNG trình duyệt qua BroadcastChannel — KHÔNG phải xem chung qua mạng với người khác (khác Teleparty/Discord). Đổi label cho rõ, tránh hiểu lầm.
-        { id: 'tog-chap',     flag: 'chapterDetect', gm: 'chapterDetect', icon: '📑', label: 'Chapters', advanced: true },
         { id: 'tog-tv',       flag: 'tvMode',       gm: 'tvMode',      icon: '📺', label: 'TV Mode', advanced: true },
     ];
 
@@ -547,6 +552,25 @@ const UI = (() => {
                 const info = await TvMode.pairWithCode(code);
                 msgEl.textContent = `Đã tìm thấy "${info.name}", đang kết nối...`;
                 await TvMode.connect();
+
+                // BUG ĐÃ SỬA: trước đây chỉ TvMode.connect() xong là dừng —
+                // video ĐANG XEM lúc kết nối không tự mở trên TV, phải đợi
+                // chuyển sang tập KHÁC (navigation) mới có video được cast,
+                // vì playVideo() trước đây chỉ được gọi trong _runMain() (chạy
+                // theo navigation event). Cast NGAY video hiện tại ở đây.
+                const currentVideoId = new URLSearchParams(location.search).get('v');
+                const v = VideoContext.getVideoEl();
+                if (currentVideoId) {
+                    msgEl.textContent = `Đã kết nối "${info.name}" — đang mở video hiện tại...`;
+                    try {
+                        await TvMode.playVideo(currentVideoId, v?.currentTime || 0);
+                    } catch (castErr) {
+                        warn('[UI] Kết nối TV thành công nhưng cast video hiện tại thất bại:', castErr);
+                        // Không coi là lỗi nghiêm trọng — kết nối vẫn thành công,
+                        // user có thể tự chuyển tập để cast, hoặc thử lại.
+                    }
+                }
+
                 _renderTvPanel();
             } catch (err) {
                 msgEl.textContent = '❌ ' + (err.message || 'Lỗi kết nối TV');
@@ -682,7 +706,6 @@ const UI = (() => {
                         if (val) _renderRoomPanel();
                     }
                 }
-                if (def.flag === 'chapterDetect') val ? ChapterDetector.enable() : ChapterDetector.disable();
                 if (def.flag === 'tvMode') {
                     const tvPanel = document.getElementById('vtv-tv-panel');
                     if (tvPanel) {

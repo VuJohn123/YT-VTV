@@ -2,7 +2,7 @@
 // tại. LÝ DO TỒN TẠI MODULE NÀY: `AudioContext.createMediaElementSource(video)`
 // chỉ được phép gọi ĐÚNG 1 LẦN cho mỗi <video> — gọi lần 2 (dù ở module khác,
 // context khác) sẽ throw `InvalidStateError: HTMLMediaElement already
-// connected...`. ChapterDetector (phân tích khoảng lặng) VÀ VolumeBooster (gain
+// connected...`. Nếu về sau có 2+ module cùng cần audio graph (vd VolumeBooster
 // >100%) đều cần tap vào audio graph của cùng 1 video — nếu mỗi module tự gọi
 // createMediaElementSource riêng, module load SAU sẽ crash ngay khi bật cả 2
 // tính năng cùng lúc. Module này là NƠI DUY NHẤT được gọi
@@ -10,7 +10,7 @@
 // tap qua đây.
 //
 // Graph: <video> → sourceNode → gainNode (volume boost) → destination (loa)
-//                                    ↳ analyser taps (ChapterDetector, ...)
+//                                    ↳ analyser taps (dự phòng cho module phân tích audio trong tương lai)
 // Analyser tap nối SAU gainNode để phân tích đúng âm lượng user thực sự nghe
 // (đã boost), không phải âm lượng gốc trước khi boost.
 const AudioGraph = (() => {
@@ -95,7 +95,7 @@ const AudioGraph = (() => {
     function isGraphActive() { return !!_sourceNode; }
 
     /**
-     * Cấp 1 AnalyserNode "nghe ké" audio graph cho module khác (ChapterDetector)
+     * Cấp 1 AnalyserNode "nghe ké" audio graph cho module khác cần phân tích audio
      * — nối SAU gainNode để phân tích đúng âm lượng thực nghe được (đã boost),
      * KHÔNG nối analyser vào destination (không tạo thêm output/echo).
      */

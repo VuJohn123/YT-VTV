@@ -106,32 +106,35 @@ const Storage = (() => {
     function saveSkipData(key, data) { GM_setValue('vtvUlt_skipData' + key, JSON.stringify(data)); }
 
     /**
-     * Đề xuất introAvg SỚM (từ tập đầu tiên) dựa trên ChapterDetector (phát
-     * hiện khoảng lặng audio) — CHỦ Ý tách riêng khỏi `introAvg` (chỉ tính từ
-     * ≥3 lần user THẬT SỰ tự skip, xem learnSkip). Không bao giờ ghi đè lên
-     * introAvg đã có — suggested chỉ là gợi ý độ tin cậy thấp hơn nhiều (audio
-     * có khoảng lặng không nhất thiết là hết intro — có thể là khoảng lặng
-     * kịch tính giữa cảnh phim), dùng để HIỂN THỊ gợi ý cho user quyết định,
-     * KHÔNG dùng để tự động seek im lặng như introAvg thật.
+     * Trung bình "bền" (robust) — dùng median làm mốc, loại các mẫu lệch quá
+     * xa (>50% so với median, tối thiểu 5s) trước khi tính trung bình cuối.
+     * SO VỚI mean thô trước đây: 1 lần user tua ngẫu nhiên không liên quan
+     * tới intro thật (xem lại 1 cảnh, nhảy tới đoạn yêu thích) rơi đúng vào
+     * khung "trông giống skip intro" (5s < to < 50% duration) sẽ kéo lệch
+     * mean vĩnh viễn; median + lọc outlier chống được việc này tốt hơn nhiều
+     * — đúng yêu cầu "chính xác và thông minh hơn" cho hệ thống học passive.
      */
-    function saveSuggestedIntro(key, seconds) {
-        const d = getSkipData(key);
-        if (d.introAvg) return; // đã có dữ liệu thật đáng tin hơn, không cần gợi ý nữa
-        if (d.introSuggested) return; // đã gợi ý rồi trong phiên trước, không ghi đè liên tục
-        d.introSuggested = Math.round(seconds);
-        saveSkipData(key, d);
+    function _robustAverage(samples) {
+        if (samples.length === 1) return Math.round(samples[0]);
+        const sorted = [...samples].sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const filtered = samples.filter(s => Math.abs(s - median) <= Math.max(median * 0.5, 5));
+        const base = filtered.length >= 2 ? filtered : samples; // đừng loại hết nếu lọc quá nghiêm ngặt
+        return Math.round(base.reduce((a, b) => a + b, 0) / base.length);
     }
+
+    const MAX_SKIP_SAMPLES = 10; // giữ tối đa N mẫu gần nhất — tự thích nghi nếu series đổi định dạng intro giữa chừng (season mới), không kẹt mãi theo mẫu cũ đã lỗi thời
 
     function learnSkip(key, from, to, duration) {
         const d = getSkipData(key);
         if (from < 5 && to > 5 && to < duration * 0.5) {
             d.intros.push(to);
-            if (d.intros.length >= 3)
-                d.introAvg = Math.round(d.intros.reduce((a, b) => a + b, 0) / d.intros.length);
+            if (d.intros.length > MAX_SKIP_SAMPLES) d.intros.shift();
+            if (d.intros.length >= 3) d.introAvg = _robustAverage(d.intros);
         } else if (to > duration - 10 && from < duration - 5) {
             d.outros.push(from);
-            if (d.outros.length >= 3)
-                d.outroAvg = Math.round(d.outros.reduce((a, b) => a + b, 0) / d.outros.length);
+            if (d.outros.length > MAX_SKIP_SAMPLES) d.outros.shift();
+            if (d.outros.length >= 3) d.outroAvg = _robustAverage(d.outros);
         }
         saveSkipData(key, d);
     }
@@ -297,7 +300,6 @@ const Storage = (() => {
             // cho MỖI video, nên để user tự bật thay vì âm thầm bật sẵn.
             sponsorBlock: getGlobal('sponsorBlock', false),
             watchParty:   getGlobal('watchParty', false),
-            chapterDetect: getGlobal('chapterDetect', false),
             tvMode:        getGlobal('tvMode', false),
         };
     }
@@ -352,7 +354,7 @@ const Storage = (() => {
         currentProfile, switchProfile, setupProfileMenu,
         getSeries, saveSeries, clearSeries,
         getHistory, addToHistory, getAllHistory,
-        getSkipData, saveSuggestedIntro, learnSkip,
+        getSkipData, learnSkip,
         addStats, getStats, getProgress,
         getLastPosition, saveLastPosition, clearLastPosition,
         addToWatchLater, getWatchLater,

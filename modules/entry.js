@@ -28,7 +28,6 @@
     if (_initFlags.pipEnabled)   AutoPiP.enable();
     if (_initFlags.audioMode)    AudioMode.enable();
     if (_initFlags.watchParty)   WatchParty.enable();
-    if (_initFlags.chapterDetect) ChapterDetector.enable();
 
     // ─── Global EventBus wires (registered once) ──────────────────────────────
 
@@ -163,8 +162,8 @@
             // bật mà vô tác dụng. Gọi attach() 2 lần cho CÙNG 1 video (ở đây
             // và lại ở bước 7 khi seriesKey thật đã biết) AN TOÀN: attach()
             // tự _detachListeners() trước khi re-attach nên không tạo listener
-            // trùng; các module nghe 'videoReady' (PiP/AudioMode/WatchParty/
-            // ChapterDetector) đã tự idempotent-check (bỏ qua nếu đã attach
+            // trùng; các module nghe 'videoReady' (PiP/AudioMode/WatchParty)
+            // đã tự idempotent-check (bỏ qua nếu đã attach
             // đúng video rồi) nên không bị ảnh hưởng bởi lần attach thứ 2.
             VideoContext.attach(null, { autoPlay: false, autoSkip: false });
 

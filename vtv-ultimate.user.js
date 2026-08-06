@@ -2,7 +2,7 @@
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
 // @icon         https://yt3.ggpht.com/vs_RBzRO4Z-OoX2arjzu1A7e7g_RpAMLRXVVkRf07rh1DVaSWNf1HcuSj2MP6v3dsbEtnTgqOZc=s48-c-k-c0x00ffffff-no-rj
-// @version      15.10
+// @version      15.11
 // @description  Tự động điều hướng tập phim VTV Giải Trí — audio ducking cho voice (fix bắt nhầm tiếng video), multi-alternative speech recognition, event-driven PiP chuẩn, gộp SponsorBlock vào AdBlock, Watch Party follow-nav
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
@@ -37,7 +37,6 @@
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/sponsor-block.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/watch-party.js
 // @require      https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js
-// @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/chapter-detector.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/buffer-monitor.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/tv-mode.js
 // Layer 3 — UI + features (depend on Layer 0-2)

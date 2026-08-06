@@ -14,11 +14,28 @@ const ChannelDetect = (() => {
         await customElements.whenDefined('ytd-video-owner-renderer').catch(() => {});
     }
 
-    function _fromPlayerResponse(win) {
+    /**
+     * BUG THẬT ĐÃ FIX: `window.ytInitialPlayerResponse` — dù tên gọi có
+     * "Initial" — KHÔNG đảm bảo tự cập nhật sau mỗi lần SPA navigate sang
+     * video mới (đã xác nhận qua tài liệu bên ngoài: dev khác gặp đúng vấn
+     * đề này, phải tự verify `videoDetails.videoId` khớp video hiện tại
+     * trước khi tin dùng global này, nếu không phải tự fetch lại qua
+     * network). Code cũ đọc thẳng KHÔNG verify — sau khi chuyển sang video
+     * khác, nếu global chưa kịp cập nhật (hoặc không cập nhật), hàm này trả
+     * về kênh của video CŨ, khiến toàn bộ luồng detect kênh sai/"không thèm
+     * update" đúng như đã báo. Giờ luôn verify videoId khớp trước khi tin —
+     * không khớp thì coi như "chưa có", để resolve() fallback qua _fromDOM()
+     * (đọc trực tiếp DOM đã re-render, luôn đúng video hiện tại).
+     */
+    function _fromPlayerResponse(win, expectedVideoId) {
         try {
             const p = win.ytInitialPlayerResponse ?? win.ytplayer?.config?.args?.raw_player_response;
             const details = p?.videoDetails;
-            if (details?.author) return { name: details.author, id: details.channelId || null };
+            if (!details?.author) return null;
+            if (expectedVideoId && details.videoId && details.videoId !== expectedVideoId) {
+                return null; // stale — thuộc về video KHÁC, không dùng
+            }
+            return { name: details.author, id: details.channelId || null };
         } catch (e) {}
         return null;
     }
@@ -73,14 +90,14 @@ const ChannelDetect = (() => {
 
         await _waitForOwner();
 
-        const fast = _fromPlayerResponse(win);
+        const fast = _fromPlayerResponse(win, videoId);
         if (fast) {
             if (videoId) _cache.set(videoId, fast);
             return fast;
         }
 
         for (let i = 0; i < 50; i++) {
-            const pr = _fromPlayerResponse(win);
+            const pr = _fromPlayerResponse(win, videoId);
             if (pr) { if (videoId) _cache.set(videoId, pr); return pr; }
 
             const dom = _fromDOM();
