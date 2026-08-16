@@ -387,6 +387,7 @@ const UI = (() => {
                             <div id="vtv-tv-panel" style="display:none"></div>
                         </div>
                     </div>
+                    <div id="vtv-dup-warning"></div>
                     <div id="vtv-warnings"></div>
                 </div>
             </div>`;
@@ -506,6 +507,7 @@ const UI = (() => {
         { id: 'tog-pip',      flag: 'pipEnabled',   gm: 'pip',       icon: '🖼',  label: 'PiP'       },
         { id: 'tog-wp',       flag: 'watchParty',   gm: 'watchParty', icon: '🔗', label: 'Sync tab (cùng máy)', advanced: true }, // Chỉ đồng bộ giữa các tab CÙNG máy/CÙNG trình duyệt qua BroadcastChannel — KHÔNG phải xem chung qua mạng với người khác (khác Teleparty/Discord). Đổi label cho rõ, tránh hiểu lầm.
         { id: 'tog-tv',       flag: 'tvMode',       gm: 'tvMode',      icon: '📺', label: 'TV Mode', advanced: true },
+        { id: 'tog-dupwarn',  flag: 'dupTabWarning', gm: 'dupTabWarning', icon: '🪟', label: 'Cảnh báo trùng tab', advanced: true }, // KHÁC "Sync tab": đây chỉ CẢNH BÁO thụ động khi cùng 1 phim VTV đang mở ≥2 tab, không đồng bộ/điều khiển gì — mặc định bật sẵn (xem storage.js getFeatureFlags).
     ];
 
     /**
@@ -706,6 +708,20 @@ const UI = (() => {
                         if (val) _renderRoomPanel();
                     }
                 }
+                if (def.flag === 'dupTabWarning') {
+                    if (val) {
+                        TabGuard.enable();
+                        // Bật lại giữa chừng (không phải lúc load trang) → cần
+                        // báo videoId hiện tại ngay, TabGuard mới enable() xong
+                        // chưa biết đang xem video nào (setCurrentVideo() chỉ
+                        // được gọi từ entry.js mỗi lần chuyển tập, không phải
+                        // mỗi lần toggle UI này).
+                        const vid = new URLSearchParams(location.search).get('v');
+                        if (window._vtvParsedInfo) TabGuard.setCurrentVideo(vid);
+                    } else {
+                        TabGuard.disable();
+                    }
+                }
                 if (def.flag === 'tvMode') {
                     const tvPanel = document.getElementById('vtv-tv-panel');
                     if (tvPanel) {
@@ -794,6 +810,7 @@ const UI = (() => {
         _showNextCard('', false);
         document.getElementById('vtv-cd-row')?.classList.remove('vtv-show');
         document.getElementById('vtv-warnings').innerHTML = '';
+        clearDupTabWarning(); // video mới đang tìm — cảnh báo trùng tab của video CŨ không còn liên quan
         _setActions();
     }
 
@@ -899,6 +916,25 @@ const UI = (() => {
         document.getElementById('vtv-continue-dismiss')?.addEventListener('click', () => { el.innerHTML = ''; });
     }
 
+    /**
+     * Cảnh báo "phim này đang mở ở tab khác" (TabGuard — tab-guard.js).
+     * Dùng RIÊNG #vtv-dup-warning, KHÔNG chung với #vtv-warnings (tránh đè
+     * lên cảnh báo tập/phân đoạn thiếu hoặc banner "xem tiếp tập dở" —
+     * appendMissingWarning()/showContinuePrompt() đều ghi đè toàn bộ
+     * innerHTML của #vtv-warnings nên không thể dùng chung container).
+     */
+    function showDupTabWarning(count) {
+        const el = document.getElementById('vtv-dup-warning');
+        if (!el) return;
+        const plural = count > 1 ? ` (${count} tab)` : '';
+        el.innerHTML = `<div class="vtv-warn vtv-fadein">🪟 Phim này đang mở ở tab khác cùng máy${plural} — có thể gây đè âm thanh lên nhau.</div>`;
+    }
+
+    function clearDupTabWarning() {
+        const el = document.getElementById('vtv-dup-warning');
+        if (el) el.innerHTML = '';
+    }
+
     // ─── Countdown ────────────────────────────────────────────────────────────
     function updateCountdown(remaining) {
         const row = document.getElementById('vtv-cd-row');
@@ -962,6 +998,7 @@ const UI = (() => {
     EventBus.on('countdownStart',  ({ total })       => startCountdown(total));
     EventBus.on('countdownCancel', ()                => clearCountdown());
     EventBus.on('voiceLabel',      ({ text })        => setVoiceLabel(text));
+    EventBus.on('dupTabWarning',   ({ count })       => count > 0 ? showDupTabWarning(count) : clearDupTabWarning());
     EventBus.on('modeChange', ({ key, value }) => {
         _flags[key] = value;
         // Đồng bộ lại checkbox DOM tương ứng — trước đây chỉ update biến

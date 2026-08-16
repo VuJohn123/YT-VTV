@@ -1,0 +1,9 @@
+name = "vtv-similarity-report"
+main = "similarity-report-worker.js"
+compatibility_date = "2026-08-01"
+
+# Tạo KV namespace trước bằng: npx wrangler kv namespace create SIMILARITY_REPORTS
+# rồi dán "id" (và "preview_id" nếu dùng wrangler dev) mà lệnh trên in ra vào đây.
+[[kv_namespaces]]
+binding = "SIMILARITY_REPORTS"
+id = "DÁN_ID_KV_NAMESPACE_CỦA_BẠN_VÀO_ĐÂY"

@@ -92,6 +92,14 @@ const BufferMonitor = (() => {
     }
 
     function _attach() {
+        // Gác cổng bằng _enabled — hàm này đăng ký 1 lần duy nhất ở
+        // module-scope (xem cuối enable() bên dưới) nên vẫn fire kể cả khi
+        // BufferMonitor đang tắt. Hiện tại chưa có UI toggle bật/tắt tính
+        // năng này (chỉ enable() 1 lần khi script khởi động), nên bug "N lần
+        // đăng ký chồng" chưa xảy ra trên thực tế — nhưng sửa trước theo
+        // cùng pattern đã áp dụng ở WatchParty/AudioMode/AutoPiP để phòng
+        // ngừa nếu sau này có người thêm toggle cho tính năng này.
+        if (!_enabled) return;
         const v = VideoContext.getVideoEl();
         if (!v || v === _attachedVideoEl) return;
         _attachedVideoEl = v;
@@ -102,11 +110,14 @@ const BufferMonitor = (() => {
         _waitingTimestamps = [];
     }
 
+    // re-attach khi chuyển tập (video element mới) — đăng ký đúng 1 lần ở
+    // module-scope, không phải bên trong enable() (xem comment ở _attach()).
+    EventBus.on('videoReady', _attach);
+
     function enable() {
         _enabled = true;
         _waitingTimestamps = [];
         _attach();
-        EventBus.on('videoReady', _attach); // re-attach khi chuyển tập (video element mới)
     }
 
     function disable() {

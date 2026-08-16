@@ -2,8 +2,8 @@
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
 // @icon         https://yt3.ggpht.com/vs_RBzRO4Z-OoX2arjzu1A7e7g_RpAMLRXVVkRf07rh1DVaSWNf1HcuSj2MP6v3dsbEtnTgqOZc=s48-c-k-c0x00ffffff-no-rj
-// @version      15.11
-// @description  Tự động điều hướng tập phim VTV Giải Trí — audio ducking cho voice (fix bắt nhầm tiếng video), multi-alternative speech recognition, event-driven PiP chuẩn, gộp SponsorBlock vào AdBlock, Watch Party follow-nav
+// @version      15.12
+// @description  Tự động điều hướng tập phim VTV Giải Trí — fix rò rỉ EventBus listener (WatchParty/AudioMode/AutoPiP/BufferMonitor), cảnh báo trùng tab (TabGuard), similarity report ẩn danh tuỳ chọn
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -18,6 +18,14 @@
 // @connect      sponsor.ajay.app
 // @connect      0.peerjs.com
 // @connect      stun.l.google.com
+// KHÔNG có @connect sẵn cho Similarity Report Worker (similarity-report.js)
+// — đã research: @connect với domain trần (vd "workers.dev") KHÔNG tự động
+// khớp subdomain, và ngay cả @connect *.workers.dev cũng có bug đã biết
+// không khớp 1 số subdomain (Tampermonkey issue #1593) — không đáng tin cậy
+// để khai sẵn ở đây cho MỌI user. User tự deploy Worker (xem
+// cf-worker/README.md) PHẢI tự thêm 1 dòng
+// "// @connect  <worker-cua-ban>.workers.dev" vào bản cài đặt riêng của họ
+// (Tampermonkey Dashboard → Edit), nếu không GM_xmlhttpRequest sẽ bị chặn.
 //
 // Load order is explicit and maps to the dependency graph:
 // Layer 0/1 — pure utilities, no dependencies
@@ -31,11 +39,13 @@
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/virtual-playlist.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/series-learner.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/episode-navigator.js
+// @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/similarity-report.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/video-context.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/audio-graph.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/player-control.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/sponsor-block.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/watch-party.js
+// @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/tab-guard.js
 // @require      https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/buffer-monitor.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/tv-mode.js

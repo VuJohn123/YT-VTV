@@ -20,6 +20,21 @@
     UI.init();
 
     GM_registerMenuCommand('🐛 Xem log lỗi', () => HistoryViewer.openErrorLog());
+    // Opt-in, MẶC ĐỊNH TẮT (xem similarity-report.js) — chỉ có tác dụng nếu
+    // user tự deploy Cloudflare Worker riêng (xem cf-worker/README.md) rồi
+    // dán URL vào đây. Không cấu hình gì = không có network call nào cả.
+    GM_registerMenuCommand('📊 Cấu hình Similarity Report (tuỳ chọn)', () => {
+        const current = Storage.getGlobal('similarityReportUrl', '');
+        const input = prompt(
+            'Dán URL Cloudflare Worker của bạn để gửi dữ liệu match series ẩn danh ' +
+            '(giúp tinh chỉnh ngưỡng Jaccard) — xem cf-worker/README.md để tự deploy.\n' +
+            'Để trống + OK để TẮT tính năng này.',
+            current
+        );
+        if (input === null) return; // user bấm Cancel
+        SimilarityReport.configure(input);
+        alert(input.trim() ? '✅ Đã lưu — bắt đầu gửi report ẩn danh từ giờ.' : '✅ Đã tắt Similarity Report.');
+    });
 
     // ─── Restore persisted feature states ────────────────────────────────────
     const _initFlags = Storage.getFeatureFlags();
@@ -28,6 +43,7 @@
     if (_initFlags.pipEnabled)   AutoPiP.enable();
     if (_initFlags.audioMode)    AudioMode.enable();
     if (_initFlags.watchParty)   WatchParty.enable();
+    if (_initFlags.dupTabWarning) TabGuard.enable();
 
     // ─── Global EventBus wires (registered once) ──────────────────────────────
 
@@ -176,13 +192,20 @@
 
             if (!isVTVChannel(channelName, channel.id)) {
                 UI.showWrongChannel(channelName);
+                TabGuard.setCurrentVideo(null); // không phải VTV → không cảnh báo trùng tab cho video này
                 return; // VideoContext vẫn đã attach ở bước 0 — PiP/Audio/Voice/Buffer-monitor vẫn hoạt động bình thường
             }
+
+            // Video ĐÃ xác nhận là VTV — bắt đầu điểm danh cho TabGuard ngay
+            // (không đợi parse xong tên tập ở bước 3 bên dưới) — trùng 2 tab
+            // vẫn đáng cảnh báo kể cả khi title không parse được tên tập.
+            TabGuard.setCurrentVideo(videoId);
 
             // 2. Video unavailability
             if (document.querySelector('ytd-message-renderer #message') ||
                 document.body.innerText.includes('Video unavailable')) {
                 UI.showUnavailable();
+                TabGuard.setCurrentVideo(null);
                 return;
             }
 
@@ -282,6 +305,7 @@
         VoiceControl.stop();
         VideoContext.detach();
         ChannelDetect.clearCache();
+        TabGuard.setCurrentVideo(null); // báo ngay cho tab khác biết tab này đã rời video (không đợi PEER_STALE_MS)
     });
 
 })();

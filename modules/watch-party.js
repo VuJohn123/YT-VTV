@@ -217,6 +217,12 @@ const WatchParty = (() => {
     }
 
     function _attachVideoListeners() {
+        // Listener này giờ đăng ký VĨNH VIỄN ở module-scope (xem comment ở
+        // enable() bên dưới) nên fire cả khi WatchParty chưa từng được bật —
+        // phải tự gác cổng bằng _enabled, nếu không sẽ gắn native DOM
+        // listener (play/pause/seeked/ratechange) lên MỌI video kể cả khi
+        // tính năng đang tắt hẳn (lãng phí, dù vô hại vì kênh broadcast rỗng).
+        if (!_enabled) return;
         const v = VideoContext.getVideoEl();
         if (!v || v === _attachedVideoEl) return; // đã attach đúng element này rồi
         _attachedVideoEl = v;
@@ -226,26 +232,41 @@ const WatchParty = (() => {
         v.addEventListener('ratechange', () => _broadcastAll('rate', { rate: v.playbackRate }));
     }
 
+    // Broadcast 'nav' mỗi khi video mới sẵn sàng — đây là tín hiệu cho các
+    // tab/máy khác trong phòng biết URL đích để tự chuyển theo (nếu họ đã
+    // bật _followNav). Không broadcast khi _applyingRemote=true — tránh vòng
+    // lặp (chính navigation này là do NHẬN lệnh nav từ nơi khác, không phải
+    // do user tự chuyển tập). Không broadcast khi !_enabled — hàm này được
+    // đăng ký 1 LẦN DUY NHẤT ở module-scope (xem cuối enable() bên dưới) nên
+    // vẫn tồn tại kể cả sau khi disable(), phải tự gác cổng bằng _enabled.
+    function _broadcastNav() {
+        if (!_enabled || _applyingRemote) return;
+        const msg = { type: 'nav', payload: { url: location.href }, from: _instanceId, ts: Date.now() };
+        _localSend(msg);
+        _remoteBroadcast(msg);
+    }
+
     // ─── Public API ─────────────────────────────────────────────────────────
+    // BUG ĐÃ SỬA ("1 phát ba cái"): trước đây EventBus.on('videoReady', ...)
+    // được gọi BÊN TRONG enable() — mỗi lần user bật lại WatchParty (sau khi
+    // đã tắt), 1 listener MỚI được đăng ký chồng lên listener(s) cũ (EventBus
+    // không tự huỷ khi disable() chạy, và disable() vốn cũng không gọi
+    // EventBus.off()). Bật/tắt N lần → N listener trùng nhau cùng tồn tại →
+    // 1 lần videoReady thật sự (chuyển tập) làm broadcast 'nav' bắn ra N lần
+    // liên tiếp cho cùng 1 URL, khiến tab/máy khác trong phòng tự
+    // Navigator.goTo() N lần dồn dập. Sửa: đăng ký listener đúng 1 LẦN DUY
+    // NHẤT ở module-scope (chạy khi file được require, giống hệt cách
+    // video-context.js/entry.js wire EventBus 1 lần ở top-level), enable()/
+    // disable() chỉ còn bật/tắt cờ _enabled — mọi handler tự gác cổng bằng
+    // cờ này thay vì được thêm/xoá theo vòng đời bật-tắt.
+    EventBus.on('videoReady', _attachVideoListeners);
+    EventBus.on('videoReady', _broadcastNav);
+
     function enable() {
         if (_enabled) return;
         _enabled = true;
         enableLocal();
         _attachVideoListeners();
-        // Re-attach mỗi khi video element mới sẵn sàng (SPA nav sang tập khác
-        // tạo/thay <video> element — listener cũ đã bị detach cùng element cũ,
-        // không tự động chuyển sang element mới nếu không lắng nghe event này).
-        EventBus.on('videoReady', _attachVideoListeners);
-        // Broadcast 'nav' mỗi khi video mới sẵn sàng — đây là tín hiệu cho
-        // các tab/máy khác trong phòng biết URL đích để tự chuyển theo (nếu
-        // họ đã bật _followNav). Không broadcast khi _applyingRemote=true —
-        // tránh vòng lặp (chính navigation này là do NHẬN lệnh nav từ nơi
-        // khác, không phải do user tự chuyển tập).
-        EventBus.on('videoReady', () => {
-            if (_applyingRemote) return;
-            _localSend({ type: 'nav', payload: { url: location.href }, from: _instanceId, ts: Date.now() });
-            _remoteBroadcast({ type: 'nav', payload: { url: location.href }, from: _instanceId, ts: Date.now() });
-        });
     }
 
     function disable() {

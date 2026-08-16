@@ -10,6 +10,7 @@ function setupMocks() {
     global.Search = { mkQuery: (b) => b, search: async () => [] };
     global.VirtualPlaylist = { build: async () => [], buildFromKnownPlaylist: async () => [] };
     global.SeriesLearner = { learn() {}, confidenceScore: () => 0 };
+    global.SimilarityReport = { report() {}, isConfigured: () => false, configure() {} };
     global.isVTVChannel = () => true;
     global.parseTitle = () => ({});
     global.compareVideoRecency = () => 0;

@@ -323,10 +323,6 @@ const AudioMode = (() => {
 
         _injectPerfCSS();
         _applyHiddenClass();
-        // Video element có thể đổi khi chuyển tập (SPA nav) — re-apply class
-        // ẩn cho element MỚI mỗi lần videoReady fire, tương tự pattern đã
-        // dùng ở WatchParty/BufferMonitor cho cùng vấn đề.
-        EventBus.on('videoReady', _applyHiddenClass);
 
         log('[AudioMode] enabled — quality:', lowest, '(giảm decode load — cơ chế tiết kiệm CPU/GPU chính), video ẩn qua visibility:hidden (bớt compositing, KHÔNG dừng decode — giới hạn thật của CSS, xem comment ở _injectPerfCSS)');
     }
@@ -366,6 +362,14 @@ const AudioMode = (() => {
 
     EventBus.on('audioModeEnable',  enable);
     EventBus.on('audioModeDisable', disable);
+    // Video element có thể đổi khi chuyển tập (SPA nav) — re-apply class ẩn
+    // cho element MỚI mỗi lần videoReady fire. Đăng ký đúng 1 LẦN ở
+    // module-scope (không phải bên trong enable()) — nếu đăng ký trong
+    // enable() thì mỗi lần user bật lại Audio Mode (sau khi tắt) sẽ chồng
+    // thêm 1 listener trùng lặp mãi mãi (EventBus không tự huỷ khi disable()
+    // chạy). _applyHiddenClass() tự gác cổng bằng `_active` nên an toàn khi
+    // gọi cả lúc đang tắt (xem cùng bug/fix ở WatchParty — watch-party.js).
+    EventBus.on('videoReady', _applyHiddenClass);
     // Re-apply on navigation (quality + audio-truyện detection reset trên video MỚI)
     EventBus.on('videoReady', () => {
         if (!_active) return;
@@ -431,12 +435,23 @@ const AutoPiP = (() => {
      * PiP thực tế đã đóng, khiến lần _check() tiếp theo hiểu sai trạng thái.
      */
     function _attachPipEvents() {
+        // Đăng ký lại từ module-scope mỗi lần videoReady fire kể cả khi
+        // AutoPiP đang tắt (xem enable() bên dưới) — tự gác cổng bằng
+        // _enabled để không gắn native listener PiP lên video khi tính năng
+        // chưa từng bật (cùng bug/fix pattern đã áp dụng ở WatchParty).
+        if (!_enabled) return;
         const v = VideoContext.getVideoEl();
         if (!v || v === _attachedVideoEl) return;
         _attachedVideoEl = v;
         v.addEventListener('enterpictureinpicture', () => { _active = true; });
         v.addEventListener('leavepictureinpicture', () => { _active = false; });
     }
+
+    // Re-attach khi video element mới sẵn sàng (SPA nav sang tập khác).
+    // Đăng ký đúng 1 LẦN ở module-scope — trước đây nằm trong enable(), mỗi
+    // lần user bật lại PiP (sau khi tắt) sẽ chồng thêm 1 listener trùng lặp
+    // vĩnh viễn (EventBus không tự huỷ khi disable() chạy).
+    EventBus.on('videoReady', _attachPipEvents);
 
     function enable() {
         if (_enabled) return;
@@ -445,8 +460,6 @@ const AutoPiP = (() => {
         document.addEventListener('visibilitychange', _check);
         _interval = setInterval(_check, 2000);
         _attachPipEvents();
-        // Re-attach khi video element mới sẵn sàng (SPA nav sang tập khác).
-        EventBus.on('videoReady', _attachPipEvents);
         log('[AutoPiP] enabled (event-driven, PIP chuẩn theo khuyến nghị MDN)');
     }
 

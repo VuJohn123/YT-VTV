@@ -16,7 +16,8 @@ function setupMocks() {
         search: async () => [],
     };
     global.VirtualPlaylist = { build: async () => [], buildFromKnownPlaylist: async () => [] };
-    global.SeriesLearner = { learn() {}, isLikelyMatch: () => false };
+    global.SeriesLearner = { learn() {}, isLikelyMatch: () => false, confidenceScore: () => 0 };
+    global.SimilarityReport = { report() {}, isConfigured: () => false, configure() {} };
     global.isVTVChannel = (name) => /VTV|VFC/i.test(name || '');
     global.parseTitle = (title) => {
         const m = title.match(/tập\s*(\d+)(?:\s*\((\d+)\/(\d+)\))?/i);

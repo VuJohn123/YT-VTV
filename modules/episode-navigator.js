@@ -95,6 +95,7 @@ const EpisodeEngine = (() => {
         const jaccard = _jaccardSimilarity(a, b);
         if (jaccard >= JACCARD_THRESHOLD) {
             log('[EpisodeEngine] series match qua Jaccard similarity (', jaccard.toFixed(2), '):', a, '≈', b);
+            SimilarityReport.report({ a, b, jaccard, source: 'jaccard', matched: true });
             return true;
         }
 
@@ -107,6 +108,7 @@ const EpisodeEngine = (() => {
             const confidence = SeriesLearner.confidenceScore(seriesKey, description);
             if (confidence > 0.5) {
                 log('[EpisodeEngine] series match qua description (confidence', confidence.toFixed(2) + '):', parsed.series);
+                SimilarityReport.report({ a, b, jaccard: confidence, source: 'learner', matched: true });
                 return true;
             }
         }

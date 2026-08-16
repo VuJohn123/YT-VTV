@@ -287,7 +287,7 @@ const Storage = (() => {
     }
 
     // ─── Feature flags (persisted toggles) ───────────────────────────────────
-    /** @returns {{autoPlay,marathon,autoSkip,voiceEnabled,audioMode,pipEnabled,sponsorBlock}} */
+    /** @returns {{autoPlay,marathon,autoSkip,voiceEnabled,audioMode,pipEnabled,sponsorBlock,watchParty,tvMode,dupTabWarning}} */
     function getFeatureFlags() {
         return {
             autoPlay:     getGlobal('auto',      true),
@@ -301,6 +301,10 @@ const Storage = (() => {
             sponsorBlock: getGlobal('sponsorBlock', false),
             watchParty:   getGlobal('watchParty', false),
             tvMode:        getGlobal('tvMode', false),
+            // Mặc định BẬT SẴN (khác watchParty/tvMode) — đây CHỈ là cảnh báo
+            // thụ động (không sync/điều khiển gì cả), rủi ro gần như 0 nên
+            // không cần bắt user tự bật như các tính năng chủ động hơn.
+            dupTabWarning: getGlobal('dupTabWarning', true),
         };
     }
 
