@@ -283,6 +283,27 @@
 
     document.addEventListener('yt-navigate-finish', _onNavigate);
 
+    // ─── SPA nav fallback (defense-in-depth) ──────────────────────────────────
+    // BUG THẬT ĐÃ GẶP: chuyển từ video kênh KHÁC sang video VTV qua search
+    // (bấm kết quả search của YouTube) — panel bị "đứng hình" ở trạng thái
+    // "Không phải kênh VTV" của video CŨ dù trang đã thực sự load đúng video
+    // VTV mới (title/kênh dưới video đã đổi đúng). TRUNG THỰC VỀ GIỚI HẠN:
+    // đã research `yt-navigate-finish` — theo tài liệu/nguồn ngoài, event
+    // này ĐƯỢC XÁC NHẬN có fire cho đúng trường hợp "clicking on a video in
+    // search results", nên chưa xác định chắc chắn 100% root cause (có thể
+    // là 1 edge case cụ thể của event này, hoặc timing race khác) — KHÔNG
+    // đoán mù sửa sai chỗ. Thay vào đó thêm 1 lưới an toàn dự phòng: poll
+    // `location.href` mỗi 1s, nếu đổi mà `yt-navigate-finish` vì lý do gì đó
+    // không fire (hoặc fire nhưng bị bỏ lỡ), _onNavigate() vẫn được gọi lại
+    // trong tối đa 1s — tự nó đã có debounce/dedupe theo `_lastVid` nên gọi
+    // thừa (khi event chính ĐÃ fire đúng) là vô hại, không chạy trùng.
+    let _lastHrefPolled = location.href;
+    setInterval(() => {
+        if (location.href === _lastHrefPolled) return;
+        _lastHrefPolled = location.href;
+        _onNavigate();
+    }, 1000);
+
     // ─── Menu commands ──────────────────────────────────────────────────────
     GM_registerMenuCommand('📺 Xem lịch sử & Export', () => HistoryViewer.open());
 

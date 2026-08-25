@@ -71,16 +71,30 @@ const AdBlock = (() => {
         requestAnimationFrame(() => { _hideAdsScheduled = false; _hideAds(); });
     }
 
+    /**
+     * BUG THẬT ĐÃ FIX: hàm này trước đây chạy VÔ ĐIỀU KIỆN (mỗi 2s interval
+     * VÀ mỗi lần player DOM đổi qua MutationObserver — rất thường xuyên), và
+     * 2 selector fallback `button[aria-label*="Skip"]` /
+     * `button[aria-label*="Bỏ qua"]` dùng `document.querySelector` KHÔNG
+     * scoped vào player — match nhầm BẤT KỲ nút nào trên TOÀN TRANG có chữ
+     * "Skip"/"Bỏ qua" trong aria-label (skip-to-content accessibility link,
+     * banner onboarding, popup xác nhận...), rồi tự động bấm nó liên tục.
+     * Đúng như user báo: mở lên là cứ tự bấm/đóng các thành phần khác trên
+     * giao diện YouTube, không tương tác được. (Đã research: YouTube gần
+     * đây còn đổi text nút thật thành chỉ "Skip" trơn — càng dễ trùng nhầm
+     * với nút khác không liên quan tới quảng cáo.)
+     * Sửa 2 lớp: (1) CHỈ chạy khi đã xác nhận THỰC SỰ đang có quảng cáo qua
+     * `_isAdShowingByClass()` (tín hiệu đáng tin cậy nhất, đã dùng ở nơi
+     * khác trong file này); (2) mọi querySelector đều SCOPE vào bên trong
+     * player, không bao giờ query thẳng `document`.
+     */
     function _skipAdButtons() {
+        if (!_isAdShowingByClass()) return; // không có quảng cáo → không có gì để skip, đừng đụng vào DOM ngoài player làm gì
+        const player = document.querySelector('.html5-video-player');
+        if (!player) return;
         const skips = ['.ytp-skip-ad-button', 'button[aria-label*="Skip"]', 'button[aria-label*="Bỏ qua"]'];
         for (const sel of skips) {
-            const btn = document.querySelector(sel);
-            // BUG ĐÃ SỬA: `btn?.offsetParent !== null` khi btn là null sẽ cho
-            // `undefined !== null` → TRUE (optional chaining short-circuit về
-            // undefined, không phải null) — code chạy tiếp vào btn.click()
-            // trên null, crash "Cannot read properties of null (reading
-            // 'click')" mỗi lần _scheduleSkipCheck bắn (rất thường xuyên vì
-            // gắn qua MutationObserver). Phải check btn tồn tại TRƯỚC.
+            const btn = player.querySelector(sel); // scoped vào player — KHÔNG dùng document.querySelector
             if (btn && btn.offsetParent !== null) { btn.click(); break; }
         }
         const vp = document.querySelector('ytd-player');
@@ -178,7 +192,7 @@ const AdBlock = (() => {
         else        { document.body.classList.remove('vtv-marathon'); stop(); }
     });
 
-    return { start, stop };
+    return { start, stop, _internal: { _skipAdButtons, _isAdShowingByClass } };
 })();
 
 

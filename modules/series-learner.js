@@ -98,6 +98,33 @@ const SeriesLearner = (() => {
     }
 
     /**
+     * Bản đầy đủ của confidenceScore() — trả về thêm các thành phần thô
+     * (bao nhiêu từ khớp / tổng bao nhiêu từ đặc trưng đã học / đã học từ
+     * bao nhiêu description) để SimilarityReport có đủ ngữ cảnh phân tích
+     * sau này, KHÔNG chỉ 1 con số confidence cuối cùng — cùng tinh thần
+     * "gain toàn bộ info hữu ích" đã áp dụng ở _jaccardRaw() bên
+     * episode-navigator.js. confidenceScore() giữ nguyên (trả về number,
+     * không phá API/test hiện có) — hàm này chỉ là bản mở rộng.
+     * @returns {{confidence:number, matchedCount:number, totalCharacters:number, sampleCount:number}}
+     */
+    function confidenceDetails(seriesKey, description) {
+        const characters = getLearnedCharacters(seriesKey);
+        const data = Storage.getLearnedData(seriesKey);
+        const sampleCount = data?.sampleCount || 0;
+        if (!characters.length || !description) {
+            return { confidence: 0, matchedCount: 0, totalCharacters: characters.length, sampleCount };
+        }
+        const wordsInDesc = new Set(_tokenize(description));
+        const matched = characters.filter(c => wordsInDesc.has(c));
+        return {
+            confidence: matched.length / characters.length,
+            matchedCount: matched.length,
+            totalCharacters: characters.length,
+            sampleCount,
+        };
+    }
+
+    /**
      * Tính "điểm tin cậy" (0-1) rằng 1 description thuộc về series đã học,
      * dựa trên số từ đặc trưng trùng khớp. Dùng làm tín hiệu PHỤ (không thay
      * thế) cho _seriesMatch dựa trên tên series trong episode-navigator.js —
@@ -108,13 +135,8 @@ const SeriesLearner = (() => {
      * @returns {number} 0 nếu chưa học đủ hoặc không khớp gì, tăng dần theo số từ trùng
      */
     function confidenceScore(seriesKey, description) {
-        const characters = getLearnedCharacters(seriesKey);
-        if (!characters.length || !description) return 0;
-
-        const wordsInDesc = new Set(_tokenize(description));
-        const matched = characters.filter(c => wordsInDesc.has(c));
-        return matched.length / characters.length;
+        return confidenceDetails(seriesKey, description).confidence;
     }
 
-    return { learn, getLearnedCharacters, confidenceScore };
+    return { learn, getLearnedCharacters, confidenceScore, confidenceDetails };
 })();

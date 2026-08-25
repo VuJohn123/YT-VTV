@@ -10,7 +10,12 @@ dữ liệu hỗ trợ).
 hình URL, `similarity-report.js` không bao giờ gửi bất kỳ request nào ra
 ngoài — 0 ảnh hưởng tới trải nghiệm dùng userscript.
 
-## 1. Deploy
+## 1. Deploy (hoặc redeploy nếu đã có Worker cũ)
+
+Nếu bạn đã deploy Worker này rồi (vd domain
+`vtv-similarity-report.minhvutanlaphanoi.workers.dev`) và chỉ cần cập nhật
+lên bản có thêm `/stats`, chỉ cần chạy lại `wrangler deploy` ở bước 4 —
+không cần tạo lại KV namespace, `wrangler.toml` vẫn dùng `id` cũ.
 
 Cần tài khoản Cloudflare (free tier đủ dùng — KV free tier: 100k lượt ghi/ngày).
 
@@ -56,20 +61,30 @@ Sau khi deploy xong, Wrangler in ra URL dạng:
 
 ## 3. Xem dữ liệu đã thu thập
 
+Mở thẳng trên trình duyệt: `https://<worker-cua-ban>.workers.dev/stats`
+— trang HTML thống kê tự render: tổng số report, tỉ lệ matched, breakdown
+theo nguồn (Jaccard/SeriesLearner), **histogram phân bố điểm Jaccard** (dùng
+cái này để tự quyết định `JACCARD_THRESHOLD` phù hợp thay vì đoán), và bảng
+50 report gần nhất. Không cần cài thêm gì, không cần `wrangler kv` — chỉ cần
+mở URL.
+
+Muốn xem dữ liệu thô thay vì trang thống kê:
 ```bash
 wrangler kv key list --binding=SIMILARITY_REPORTS
 wrangler kv key get --binding=SIMILARITY_REPORTS "report:<timestamp>:<suffix>"
 ```
 
-Hoặc viết thêm 1 endpoint GET riêng (không có sẵn ở đây — cố tình không làm
-endpoint đọc public, tránh lộ dữ liệu ra ngoài cho ai cũng xem được) để
-dump toàn bộ ra JSON rồi tự phân tích ngưỡng Jaccard phù hợp.
-
 ## Rủi ro cần biết
 
-- Endpoint **không có auth** — ai biết URL đều POST được. Vì payload chỉ
-  chứa 2 chuỗi tên series (dữ liệu vốn public trên YouTube) + 1 số điểm
-  Jaccard, rủi ro thực tế thấp, nhưng Worker vẫn giới hạn kích thước payload
-  (2KB) và validate schema để chặn spam/abuse thô sơ.
-- Free tier Cloudflare Workers/KV có giới hạn (KV: 100k ghi/ngày,
-  1GB lưu trữ). Dùng cá nhân sẽ không bao giờ chạm ngưỡng này.
+- Cả 2 endpoint (`POST /` và `GET /stats`) **không có auth** — ai biết URL
+  đều xem/gửi được. Vì payload chỉ chứa 2 chuỗi tên series (dữ liệu vốn
+  public trên YouTube) + 1 số điểm Jaccard, rủi ro thực tế thấp, nhưng
+  Worker vẫn giới hạn kích thước payload (2KB) và validate schema để chặn
+  spam/abuse thô sơ ở endpoint ghi. Nếu không muốn ai cũng xem được trang
+  `/stats`, tự thêm check `request.headers.get('Authorization')` hoặc 1
+  query param bí mật đơn giản trước khi deploy.
+- Free tier Cloudflare Workers/KV có giới hạn (KV: 100k đọc/ngày, 1000
+  ghi-list-xoá/ngày, 1GB lưu trữ; Worker: 1000 subrequest tới KV/lần gọi —
+  `/stats` cap ở 1000 report gần nhất để luôn nằm gọn trong free tier). Dùng
+  cá nhân sẽ không bao giờ chạm ngưỡng này trong nhiều tháng "cày phim" bình
+  thường.

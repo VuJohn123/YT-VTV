@@ -63,13 +63,24 @@ const EpisodeEngine = (() => {
         );
     }
 
-    function _jaccardSimilarity(a, b) {
+    function _jaccardRaw(a, b) {
         const setA = _tokenSet(a), setB = _tokenSet(b);
-        if (setA.size < MIN_TOKENS_FOR_JACCARD || setB.size < MIN_TOKENS_FOR_JACCARD) return 0;
+        if (setA.size < MIN_TOKENS_FOR_JACCARD || setB.size < MIN_TOKENS_FOR_JACCARD) {
+            return { score: 0, sizeA: setA.size, sizeB: setB.size, intersection: 0, union: 0 };
+        }
         let intersection = 0;
         for (const w of setA) if (setB.has(w)) intersection++;
         const union = setA.size + setB.size - intersection;
-        return union === 0 ? 0 : intersection / union;
+        return { score: union === 0 ? 0 : intersection / union, sizeA: setA.size, sizeB: setB.size, intersection, union };
+    }
+
+    // Giữ nguyên chữ ký cũ (trả về số, không phải object) — dùng ở chỗ chỉ
+    // cần điểm số, và để KHÔNG phá vỡ API/test hiện có
+    // (tests/series-jaccard.test.js gọi trực tiếp qua _internal, kỳ vọng trả
+    // về number). `_jaccardRaw` bên trên mới có đủ thành phần thô
+    // (sizeA/sizeB/intersection/union) cho SimilarityReport — xem _seriesMatch.
+    function _jaccardSimilarity(a, b) {
+        return _jaccardRaw(a, b).score;
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -92,11 +103,33 @@ const EpisodeEngine = (() => {
         // Bag-of-words similarity — bắt được trường hợp substring/prefix bó
         // tay: đảo thứ tự từ, viết tắt xen kẽ, dấu câu khác nhau... mà vẫn rõ
         // ràng là "gần như cùng 1 cụm từ" khi nhìn theo tập hợp từ.
-        const jaccard = _jaccardSimilarity(a, b);
+        const raw = _jaccardRaw(a, b);
+        const jaccard = raw.score;
         if (jaccard >= JACCARD_THRESHOLD) {
             log('[EpisodeEngine] series match qua Jaccard similarity (', jaccard.toFixed(2), '):', a, '≈', b);
-            SimilarityReport.report({ a, b, jaccard, source: 'jaccard', matched: true });
+            SimilarityReport.report({
+                a, b, jaccard, source: 'jaccard', matched: true,
+                // Thành phần THÔ của Jaccard (không chỉ điểm số cuối) — cho
+                // phép tính lại các độ đo khác (Dice, overlap coefficient...)
+                // từ dữ liệu ĐÃ CÓ sau này mà không cần bản userscript mới
+                // report lại theo format khác — "gain toàn bộ info hữu ích"
+                // ngay từ đầu thay vì phải sửa đi sửa lại schema.
+                sizeA: raw.sizeA, sizeB: raw.sizeB, intersection: raw.intersection, union: raw.union,
+            });
             return true;
+        }
+        // Report cả case KHÔNG match (jaccard > 0 nghĩa là có ít nhất 1 từ
+        // chung — "gần trúng" thật sự đáng để phân tích khi tinh chỉnh
+        // JACCARD_THRESHOLD sau này, KHÁC với jaccard = 0 tức 2 chuỗi chẳng
+        // liên quan gì — bỏ qua case đó để không làm loãng histogram/tốn
+        // quota ghi free tier bằng dữ liệu vô nghĩa). Không có report này
+        // thì /stats chỉ thấy được phân bố của các case ĐÃ match — không đủ
+        // để biết ngưỡng 0.5 hiện tại có đang bỏ sót hay bắt nhầm quá nhiều.
+        else if (jaccard > 0) {
+            SimilarityReport.report({
+                a, b, jaccard, source: 'jaccard', matched: false,
+                sizeA: raw.sizeA, sizeB: raw.sizeB, intersection: raw.intersection, union: raw.union,
+            });
         }
 
         // Fallback: string match thất bại hoàn toàn (title viết khác hẳn,
@@ -105,11 +138,15 @@ const EpisodeEngine = (() => {
         // Chỉ tin khi confidence > 50% (hơn nửa số từ đặc trưng khớp), để
         // tránh false positive từ 1-2 từ trùng ngẫu nhiên.
         if (description && seriesKey) {
-            const confidence = SeriesLearner.confidenceScore(seriesKey, description);
+            const cd = SeriesLearner.confidenceDetails(seriesKey, description);
+            const confidence = cd.confidence;
+            const extra = { matchedCharacters: cd.matchedCount, totalCharacters: cd.totalCharacters, sampleCount: cd.sampleCount };
             if (confidence > 0.5) {
                 log('[EpisodeEngine] series match qua description (confidence', confidence.toFixed(2) + '):', parsed.series);
-                SimilarityReport.report({ a, b, jaccard: confidence, source: 'learner', matched: true });
+                SimilarityReport.report({ a, b, jaccard: confidence, source: 'learner', matched: true, ...extra });
                 return true;
+            } else if (confidence > 0) {
+                SimilarityReport.report({ a, b, jaccard: confidence, source: 'learner', matched: false, ...extra });
             }
         }
         return false;
@@ -478,6 +515,6 @@ const EpisodeEngine = (() => {
 
     return {
         run, findNext, findPrevious, invalidateList,
-        _internal: { _seriesMatch, _jaccardSimilarity },
+        _internal: { _seriesMatch, _jaccardSimilarity, _jaccardRaw },
     };
 })();

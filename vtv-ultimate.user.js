@@ -2,8 +2,8 @@
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
 // @icon         https://yt3.ggpht.com/vs_RBzRO4Z-OoX2arjzu1A7e7g_RpAMLRXVVkRf07rh1DVaSWNf1HcuSj2MP6v3dsbEtnTgqOZc=s48-c-k-c0x00ffffff-no-rj
-// @version      15.12
-// @description  Tự động điều hướng tập phim VTV Giải Trí — fix rò rỉ EventBus listener (WatchParty/AudioMode/AutoPiP/BufferMonitor), cảnh báo trùng tab (TabGuard), similarity report ẩn danh tuỳ chọn
+// @version      15.14
+// @description  Tự động điều hướng tập phim VTV Giải Trí — BufferMonitor phân biệt network-bound vs cpu-bound (dropped frames), similarity report gain đủ raw data (Dice/set sizes/matched characters)
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
