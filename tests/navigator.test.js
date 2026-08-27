@@ -13,6 +13,11 @@ test('Watchdog tự thu hẹp từ 1200ms mặc định xuống sát latency SPA
     const listeners = {};
     global.document = {
         addEventListener(evt, fn) { (listeners[evt] ||= []).push(fn); },
+        // Không có anchor thật nào trên trang trong test này (mô phỏng
+        // trường hợp fallback) — _findReusableRealAnchor() phải tự nhận ra
+        // không có gì dùng được rồi rơi về nhánh tạo anchor mới bên dưới,
+        // không được throw vì thiếu querySelectorAll.
+        querySelectorAll: () => [],
         createElement: () => ({ style: {}, click() {}, remove() {}, set href(v) {}, set rel(v) {}, set tabIndex(v) {} }),
         body: { appendChild() {} },
     };

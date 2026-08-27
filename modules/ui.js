@@ -326,6 +326,62 @@ GM_addStyle(`
 /* ── Missing ep warning animation ──────────────────────────────────────── */
 @keyframes vtv-fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .vtv-fadein { animation: vtv-fadein .2s ease forwards; }
+
+/* ── Settings view (tab riêng) ──────────────────────────────────────────── */
+/* zoom (KHÔNG dùng transform:scale) — zoom thay đổi layout footprint thật
+   sự (Baseline 2024, hỗ trợ tốt Chromium/Firefox 126+/Safari), nên nội dung
+   co giãn kèm layout chứ không chỉ hình ảnh, và panel vẫn kéo-thả/click
+   đúng toạ độ vì bounding box đã đổi thật — transform:scale() chỉ đổi visual,
+   bounding box giữ nguyên kích thước gốc, khiến hit-box của các nút lệch
+   khỏi phần tử nhìn thấy sau khi phóng to — không phù hợp cho 1 panel có
+   nhiều nút bấm + kéo-thả như thế này. */
+#vtv-inner { zoom: var(--vtv-zoom, 1); }
+
+#vtv-settings-view { display: none; flex-direction: column; gap: 14px; }
+#vtv-settings-view.vtv-show { display: flex; }
+#vtv-inner.vtv-settings-mode > *:not(#vtv-settings-view) { display: none !important; }
+
+.vtv-settings-back {
+    display: flex; align-items: center; gap: 6px;
+    background: none; border: none; color: #9ab8e0; font-size: 12px;
+    cursor: pointer; padding: 2px 0; width: fit-content;
+}
+.vtv-settings-back:hover { color: #cfe0ff; }
+
+.vtv-settings-group { display: flex; flex-direction: column; gap: 8px; }
+.vtv-settings-label {
+    font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: .4px;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.vtv-settings-value { color: #cfe0ff; font-weight: 600; text-transform: none; letter-spacing: 0; }
+
+.vtv-fontsize-row { display: flex; gap: 6px; }
+.vtv-fontsize-btn {
+    flex: 1; padding: 7px 0; text-align: center;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px; color: #ccc; cursor: pointer; font-size: 12px;
+    transition: background .15s, border-color .15s;
+}
+.vtv-fontsize-btn:hover { background: rgba(255,255,255,0.11); }
+.vtv-fontsize-btn.vtv-active {
+    background: rgba(62,166,255,.18); border-color: rgba(62,166,255,.45); color: #a8d4ff;
+}
+
+.vtv-volume-slider {
+    width: 100%; accent-color: #4a9eff; cursor: pointer;
+}
+
+.vtv-shortcuts-list { display: flex; flex-direction: column; gap: 6px; }
+.vtv-shortcut-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; color: #bbb;
+}
+.vtv-shortcut-key {
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 5px; padding: 2px 7px; font-size: 11px; color: #ddd;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.vtv-shortcuts-note { font-size: 11px; color: #777; line-height: 1.4; }
 `);
 
 const UI = (() => {
@@ -351,6 +407,7 @@ const UI = (() => {
             <div id="vtv-header">
                 <div id="vtv-logo">V</div>
                 <div id="vtv-title">VTV Ultimate</div>
+                <button class="vtv-hbtn" id="vtv-btn-settings" title="Cài đặt">⚙</button>
                 <button class="vtv-hbtn" id="vtv-btn-collapse" title="Thu gọn">−</button>
                 <button class="vtv-hbtn" id="vtv-btn-close"    title="Ẩn">✕</button>
             </div>
@@ -389,6 +446,44 @@ const UI = (() => {
                     </div>
                     <div id="vtv-dup-warning"></div>
                     <div id="vtv-warnings"></div>
+
+                    <div id="vtv-settings-view">
+                        <button class="vtv-settings-back" id="vtv-btn-settings-back">← Quay lại</button>
+
+                        <div class="vtv-settings-group">
+                            <div class="vtv-settings-label">Cỡ chữ (panel này)</div>
+                            <div class="vtv-fontsize-row" id="vtv-fontsize-row">
+                                <button class="vtv-fontsize-btn" data-scale="0.88">A<span style="font-size:9px">-</span></button>
+                                <button class="vtv-fontsize-btn" data-scale="1">A</button>
+                                <button class="vtv-fontsize-btn" data-scale="1.18">A<span style="font-size:14px">+</span></button>
+                                <button class="vtv-fontsize-btn" data-scale="1.35">A<span style="font-size:16px">+</span></button>
+                            </div>
+                        </div>
+
+                        <div class="vtv-settings-group">
+                            <div class="vtv-settings-label">
+                                <span>Âm lượng mặc định</span>
+                                <span class="vtv-settings-value" id="vtv-volume-value">100%</span>
+                            </div>
+                            <input type="range" class="vtv-volume-slider" id="vtv-volume-slider" min="0" max="200" step="5" value="100">
+                            <div class="vtv-shortcuts-note">Tự áp dụng cho video đang xem và mọi video sau này (kể cả trên 100% — dùng Web Audio API, xem PiP/Audio ở tính năng chính nếu cần chi tiết).</div>
+                        </div>
+
+                        <div class="vtv-settings-group">
+                            <div class="vtv-settings-label">Phím tắt</div>
+                            <div class="vtv-shortcuts-list">
+                                <div class="vtv-shortcut-row"><span>Voice — giữ để nói lệnh</span><span class="vtv-shortcut-key">V (giữ)</span></div>
+                                <div class="vtv-shortcut-row"><span>Play / Pause</span><span class="vtv-shortcut-key">Space / K</span></div>
+                                <div class="vtv-shortcut-row"><span>Tua lùi / tới 10s</span><span class="vtv-shortcut-key">J / L</span></div>
+                                <div class="vtv-shortcut-row"><span>Tua lùi / tới 5s</span><span class="vtv-shortcut-key">← / →</span></div>
+                                <div class="vtv-shortcut-row"><span>Tăng / giảm âm lượng</span><span class="vtv-shortcut-key">↑ / ↓</span></div>
+                                <div class="vtv-shortcut-row"><span>Tắt tiếng</span><span class="vtv-shortcut-key">M</span></div>
+                                <div class="vtv-shortcut-row"><span>Toàn màn hình</span><span class="vtv-shortcut-key">F</span></div>
+                                <div class="vtv-shortcut-row"><span>Thu nhỏ góc (miniplayer)</span><span class="vtv-shortcut-key">I</span></div>
+                            </div>
+                            <div class="vtv-shortcuts-note">"V" là phím riêng của VTV Ultimate. Các phím còn lại là phím tắt gốc của YouTube (script này không đụng tới/không ghi đè) — liệt kê ở đây để tra cứu nhanh trong 1 chỗ, không phải phím do script tự thêm.</div>
+                        </div>
+                    </div>
                 </div>
             </div>`;
         document.body.appendChild(_panel);
@@ -403,9 +498,31 @@ const UI = (() => {
         if (_prefs.collapsed) { _collapsed = true; _panel.classList.add('vtv-collapsed'); }
         if (_prefs.hidden)    { _panel.classList.add('vtv-hidden'); _fab.classList.add('vtv-show'); }
         if (_prefs.panelPos)  _applyPos(_prefs.panelPos);
+        _applyFontScale(_prefs.fontScale || 1);
+        _syncVolumeSlider();
 
         _renderToggles();
         _wireEvents();
+    }
+
+    /** zoom scale cho #vtv-inner — xem comment CSS "Settings view" phía trên
+     * (Baseline 2024, chọn thay transform:scale vì giữ đúng layout footprint
+     * — panel còn kéo-thả/click chính xác sau khi phóng to, không bị lệch
+     * hit-box). */
+    function _applyFontScale(scale) {
+        _panel.style.setProperty('--vtv-zoom', scale);
+        document.querySelectorAll('#vtv-fontsize-row .vtv-fontsize-btn').forEach(btn => {
+            btn.classList.toggle('vtv-active', parseFloat(btn.dataset.scale) === scale);
+        });
+    }
+
+    function _syncVolumeSlider() {
+        const slider = document.getElementById('vtv-volume-slider');
+        const label  = document.getElementById('vtv-volume-value');
+        if (!slider || !label) return;
+        const saved = Storage.getGlobal('defaultVolumeBoost', 100);
+        slider.value = saved;
+        label.textContent = saved + '%';
     }
 
     function _applyPos(pos) {
@@ -453,6 +570,40 @@ const UI = (() => {
         // Advanced toggles group — thu gọn mặc định, mở/đóng khi click header
         document.getElementById('vtv-adv-hd').addEventListener('click', () => {
             document.getElementById('vtv-adv-wrap').classList.toggle('vtv-adv-open');
+        });
+
+        // ── Settings view (tab riêng) ──────────────────────────────────────
+        document.getElementById('vtv-btn-settings').addEventListener('click', () => {
+            document.getElementById('vtv-inner').classList.add('vtv-settings-mode');
+            document.getElementById('vtv-settings-view').classList.add('vtv-show');
+        });
+        document.getElementById('vtv-btn-settings-back').addEventListener('click', () => {
+            document.getElementById('vtv-inner').classList.remove('vtv-settings-mode');
+            document.getElementById('vtv-settings-view').classList.remove('vtv-show');
+        });
+
+        document.getElementById('vtv-fontsize-row').addEventListener('click', (e) => {
+            const btn = e.target.closest('.vtv-fontsize-btn');
+            if (!btn) return;
+            const scale = parseFloat(btn.dataset.scale);
+            _applyFontScale(scale);
+            Storage.saveUIPrefs({ fontScale: scale });
+        });
+
+        const volumeSlider = document.getElementById('vtv-volume-slider');
+        volumeSlider.addEventListener('input', () => {
+            const percent = parseInt(volumeSlider.value, 10);
+            document.getElementById('vtv-volume-value').textContent = percent + '%';
+            // Áp NGAY cho video đang xem — người dùng muốn thấy/nghe hiệu quả
+            // liền khi kéo slider, không phải đợi chuyển tập kế tiếp mới có
+            // tác dụng (khác lưu default, vốn chỉ áp cho video SAU này —
+            // xem EventBus.on('videoReady', ...) trong player-control.js).
+            PlayerControl.setVolumeBoost(percent);
+        });
+        volumeSlider.addEventListener('change', () => {
+            // 'change' (thả chuột/nhả phím) mới lưu persist — tránh ghi
+            // GM_setValue liên tục theo từng pixel kéo của 'input'.
+            Storage.setGlobal('defaultVolumeBoost', parseInt(volumeSlider.value, 10));
         });
 
         // Drag
@@ -507,8 +658,13 @@ const UI = (() => {
         { id: 'tog-pip',      flag: 'pipEnabled',   gm: 'pip',       icon: '🖼',  label: 'PiP'       },
         { id: 'tog-wp',       flag: 'watchParty',   gm: 'watchParty', icon: '🔗', label: 'Sync tab (cùng máy)', advanced: true }, // Chỉ đồng bộ giữa các tab CÙNG máy/CÙNG trình duyệt qua BroadcastChannel — KHÔNG phải xem chung qua mạng với người khác (khác Teleparty/Discord). Đổi label cho rõ, tránh hiểu lầm.
         { id: 'tog-tv',       flag: 'tvMode',       gm: 'tvMode',      icon: '📺', label: 'TV Mode', advanced: true },
-        { id: 'tog-dupwarn',  flag: 'dupTabWarning', gm: 'dupTabWarning', icon: '🪟', label: 'Cảnh báo trùng tab', advanced: true }, // KHÁC "Sync tab": đây chỉ CẢNH BÁO thụ động khi cùng 1 phim VTV đang mở ≥2 tab, không đồng bộ/điều khiển gì — mặc định bật sẵn (xem storage.js getFeatureFlags).
     ];
+    // "Cảnh báo trùng tab" (TabGuard) đã bỏ khỏi TOGGLE_DEFS theo yêu cầu —
+    // giờ là tính năng PASSIVE: không có on/off, luôn bật sẵn ngay khi
+    // entry.js load (xem TabGuard.enable() ở đó), không cần user quan tâm
+    // bật/tắt. Rủi ro gần như 0 (chỉ cảnh báo thụ động, không điều khiển gì)
+    // nên không đáng có thêm 1 công tắc trong panel — đúng tinh thần user
+    // yêu cầu: bớt thứ phải nghĩ tới, không phải mọi tính năng đều cần toggle.
 
     /**
      * Render Room UI cho Watch Party remote tier (nhiều máy). 3 trạng thái:
@@ -706,20 +862,6 @@ const UI = (() => {
                     if (roomPanel) {
                         roomPanel.style.display = val ? 'flex' : 'none';
                         if (val) _renderRoomPanel();
-                    }
-                }
-                if (def.flag === 'dupTabWarning') {
-                    if (val) {
-                        TabGuard.enable();
-                        // Bật lại giữa chừng (không phải lúc load trang) → cần
-                        // báo videoId hiện tại ngay, TabGuard mới enable() xong
-                        // chưa biết đang xem video nào (setCurrentVideo() chỉ
-                        // được gọi từ entry.js mỗi lần chuyển tập, không phải
-                        // mỗi lần toggle UI này).
-                        const vid = new URLSearchParams(location.search).get('v');
-                        if (window._vtvParsedInfo) TabGuard.setCurrentVideo(vid);
-                    } else {
-                        TabGuard.disable();
                     }
                 }
                 if (def.flag === 'tvMode') {

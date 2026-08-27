@@ -102,8 +102,73 @@ const Navigator = (() => {
      * property của 1 click thật) thay vì tự dựng `new MouseEvent(...)`, và
      * gỡ anchor ở tick sau thay vì đồng bộ ngay — phòng router xử lý click
      * bất đồng bộ (rAF/microtask) rồi mới đọc lại target.
+     *
+     * TRUNG THỰC VỀ GIỚI HẠN (đã research kỹ, xem ngay dưới đây): user báo
+     * fast-path này VẪN luôn fallback hard reload trên máy họ — chuyển tập
+     * chậm, không mượt như YouTube tự điều hướng. Đã research
+     * `Event.isTrusted`: MỌI event dispatch qua script (kể cả `.click()`)
+     * LUÔN có `isTrusted: false` — hành vi chuẩn của mọi trình duyệt, không
+     * có cách nào từ script tạo ra 1 click "thật" theo nghĩa isTrusted=true.
+     * NẾU router nội bộ YouTube lọc theo isTrusted hoặc theo 1 thuộc
+     * tính/class nội bộ riêng của anchor họ tự render (chưa có nguồn công
+     * khai xác nhận chắc chắn cơ chế lọc thật của họ — KHÔNG đoán mù khẳng
+     * định đây LÀ nguyên nhân duy nhất), thì 1 anchor hoàn toàn mới do
+     * script tạo — dù style/kích thước đã đúng — vẫn có thể không đủ để
+     * vượt qua, vì đây có thể là giới hạn khác hẳn lần sửa style trước đó.
+     *
+     * CẢI TIẾN LẦN NÀY (không phải khẳng định "đã fix root cause 100%", mà
+     * là tăng khả năng thành công bằng 1 hướng thử KHÁC hẳn): thử CLICK VÀO
+     * 1 ANCHOR THẬT do chính YouTube tự render sẵn trên trang (link video
+     * trong sidebar "tiếp theo"/related, hoặc trong playlist panel) thay vì
+     * luôn tạo anchor MỚI — anchor do YouTube tự tạo nhiều khả năng có đúng
+     * class/thuộc tính/polymer property nội bộ (`yt-simple-endpoint`...) mà
+     * router của họ đang thật sự dựa vào, thứ mà anchor tự tạo từ đầu không
+     * thể có. Đổi `href` của anchor thật đó sang URL đích rồi click, sau đó
+     * khôi phục lại href gốc (chỉ khi SPA nav CHƯA xảy ra — nếu đã nav
+     * thành công thì DOM cũ có thể không còn ý nghĩa/đã bị YouTube tự thay
+     * thế, khôi phục lúc đó là thừa và có thể ghi đè nhầm lên state mới của
+     * chính YouTube). Vẫn fallback về anchor tự tạo (cách cũ, giữ nguyên
+     * không xoá) nếu không tìm thấy anchor thật nào dùng được (theater/
+     * fullscreen ẩn hết sidebar, hoặc trang chưa render kịp) — không làm
+     * giảm độ tin cậy so với trước, chỉ THÊM 1 lượt thử có cơ sở hơn TRƯỚC
+     * lượt thử cũ.
      */
+    function _findReusableRealAnchor() {
+        // Bất kỳ <a> nào YouTube tự render trỏ tới 1 video khác — ưu tiên
+        // sidebar "lên tiếp theo"/related vì gần như luôn có mặt, kể cả khi
+        // thu nhỏ trang, và playlist panel (khi đang xem theo danh sách phát
+        // như trong ảnh user gửi — &list=...).
+        const candidates = document.querySelectorAll(
+            '#secondary a#thumbnail, #related a#thumbnail, ytd-compact-video-renderer a#thumbnail, ytd-playlist-panel-video-renderer a#wc-endpoint'
+        );
+        for (const a of candidates) {
+            if (a instanceof HTMLAnchorElement && a.href && a.isConnected) return a;
+        }
+        return null;
+    }
+
     function _dispatchSpaClick(url) {
+        const reused = _findReusableRealAnchor();
+        if (reused) {
+            // Đổi href tạm thời rồi click bằng CHÍNH anchor thật của
+            // YouTube — không đụng gì khác trên anchor (giữ nguyên mọi
+            // class/thuộc tính/polymer property nội bộ họ đã gắn sẵn).
+            const originalHref = reused.getAttribute('href');
+            reused.setAttribute('href', url);
+            reused.click();
+            setTimeout(() => {
+                // Chỉ khôi phục nếu URL trang CHƯA đổi (xem giải thích ở
+                // comment phía trên _findReusableRealAnchor).
+                if (reused.isConnected && location.href.indexOf(url) === -1) {
+                    reused.setAttribute('href', originalHref);
+                }
+            }, 50);
+            return;
+        }
+
+        // Không tìm thấy anchor thật nào dùng được — fallback về cách cũ: tự
+        // tạo anchor. Giữ nguyên logic này làm lưới an toàn thứ 2, KHÔNG
+        // xoá — vẫn có khả năng thành công tuỳ hành vi router thật.
         const anchor = document.createElement('a');
         anchor.href = url;
         anchor.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1;';

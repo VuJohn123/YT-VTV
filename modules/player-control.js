@@ -281,3 +281,16 @@ const PlayerControl = (() => {
         togglePiP, enterPiP, exitPiP,
     };
 })();
+
+// ─── Áp lại "âm lượng mặc định" mỗi khi chuyển tập ──────────────────────────
+// Setting "Âm lượng mặc định" trong tab Settings (ui.js) chỉ set ngay lúc user
+// kéo slider — <video> element bị YouTube tạo MỚI mỗi khi chuyển tập (SPA
+// nav), tự reset volume/gain về mặc định 100%, KHÔNG tự nhớ lựa chọn của
+// user. Đăng ký 1 lần duy nhất ở module-scope (không phải trong 1 hàm
+// enable() nào — tính năng này luôn "bật", không có toggle riêng, nên không
+// có nguy cơ rò rỉ listener như đã gặp/fix ở WatchParty/AudioMode/AutoPiP/
+// BufferMonitor) để tự áp lại target % đã lưu cho MỌI video mới.
+EventBus.on('videoReady', () => {
+    const target = Storage.getGlobal('defaultVolumeBoost', 100);
+    if (target !== 100) PlayerControl.setVolumeBoost(target);
+});

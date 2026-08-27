@@ -2,8 +2,8 @@
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
 // @icon         https://yt3.ggpht.com/vs_RBzRO4Z-OoX2arjzu1A7e7g_RpAMLRXVVkRf07rh1DVaSWNf1HcuSj2MP6v3dsbEtnTgqOZc=s48-c-k-c0x00ffffff-no-rj
-// @version      15.14
-// @description  Tự động điều hướng tập phim VTV Giải Trí — BufferMonitor phân biệt network-bound vs cpu-bound (dropped frames), similarity report gain đủ raw data (Dice/set sizes/matched characters)
+// @version      15.16
+// @description  Tự động điều hướng tập phim VTV Giải Trí — Settings tab (cỡ chữ/âm lượng mặc định/phím tắt), Similarity Farm Mode qua RSS feed
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
@@ -18,6 +18,13 @@
 // @connect      sponsor.ajay.app
 // @connect      0.peerjs.com
 // @connect      stun.l.google.com
+// @connect      www.youtube.com
+// ↑ Cho similarity-farm.js (Farm Mode) fetch RSS feed công khai
+// (youtube.com/feeds/videos.xml?channel_id=...) — cùng domain trang đang
+// chạy nhưng GM_xmlhttpRequest LUÔN cần khai @connect tường minh, kể cả
+// same-origin (đây không bị vướng vấn đề subdomain như Similarity Report
+// Worker bên dưới, vì "www.youtube.com" là domain cố định biết trước, không
+// phải domain riêng theo từng user như *.workers.dev).
 // KHÔNG có @connect sẵn cho Similarity Report Worker (similarity-report.js)
 // — đã research: @connect với domain trần (vd "workers.dev") KHÔNG tự động
 // khớp subdomain, và ngay cả @connect *.workers.dev cũng có bug đã biết
@@ -40,6 +47,7 @@
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/series-learner.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/episode-navigator.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/similarity-report.js
+// @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/similarity-farm.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/video-context.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/audio-graph.js
 // @require      https://raw.githubusercontent.com/VuJohn123/YT-VTV/main/modules/player-control.js

@@ -17,6 +17,13 @@ function setupMocks() {
         getGain: () => gain,
         isGraphActive: () => graphActive,
     };
+    // player-control.js giờ có thêm 1 EventBus.on('videoReady', ...) ở
+    // module-scope (áp lại "âm lượng mặc định" mỗi khi chuyển tập — xem
+    // comment cuối player-control.js) và đọc Storage.getGlobal() bên trong
+    // — cần mock cả 2, dù các test trong file này không tự trigger
+    // 'videoReady' (chỉ gọi thẳng setRateExact/setVolumeBoost qua API export).
+    global.EventBus = { on() {}, emit() {} };
+    global.Storage  = { getGlobal: () => 100 }; // 100 = không có default boost nào set sẵn, tránh set thầm trong lúc load module ảnh hưởng test khác
     return { fakeVideo, getGain: () => gain };
 }
 

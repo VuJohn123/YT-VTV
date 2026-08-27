@@ -17,7 +17,7 @@ Nếu bạn đã deploy Worker này rồi (vd domain
 lên bản có thêm `/stats`, chỉ cần chạy lại `wrangler deploy` ở bước 4 —
 không cần tạo lại KV namespace, `wrangler.toml` vẫn dùng `id` cũ.
 
-Cần tài khoản Cloudflare (free tier đủ dùng — KV free tier: 100k lượt ghi/ngày).
+Cần tài khoản Cloudflare (free tier đủ dùng cho cá nhân — xem chi tiết giới hạn thật ở phần "Rủi ro cần biết" cuối file, đặc biệt nếu định dùng Farm Mode).
 
 ```bash
 cd cf-worker
@@ -74,8 +74,31 @@ wrangler kv key list --binding=SIMILARITY_REPORTS
 wrangler kv key get --binding=SIMILARITY_REPORTS "report:<timestamp>:<suffix>"
 ```
 
-## Rủi ro cần biết
+## 4. Farm Mode — thu thập dữ liệu hàng loạt (tuỳ chọn)
 
+Ngoài report tự động khi xem phim bình thường, có thêm 3 menu Tampermonkey
+để thu thập NHANH hơn nhiều (`similarity-farm.js`):
+
+- **🌾 Farm: Thêm kênh hiện tại vào whitelist** — mở 1 video của kênh muốn
+  farm rồi bấm menu này, tự lấy đúng channel ID, không cần tự gõ tay.
+- **🌾 Farm: Xem/Xoá kênh trong whitelist**
+- **🌾 Farm: Chạy thu thập dữ liệu hàng loạt** — quét RSS feed công khai của
+  từng kênh trong whitelist (tối đa 15 video gần nhất/kênh — giới hạn cứng
+  của YouTube), so sánh pairwise mọi cặp video TRONG CÙNG 1 kênh, gửi report.
+  Có `confirm()` hiện rõ số lượng TRƯỚC khi gửi gì.
+
+**Quan trọng — quota**: mỗi report = 1 lượt ghi KV, và free tier CHỈ có
+**1000 lượt ghi/ngày** (xem "Rủi ro cần biết" bên dưới — đây là con số hay
+bị nhầm với lượt ĐỌC, vốn rộng rãi hơn nhiều ở 100k/ngày). Farm Mode tự cap
+ở 800 report/lần chạy (lấy mẫu ngẫu nhiên nếu vượt), chừa chỗ cho report
+phát sinh tự nhiên trong ngày từ việc xem phim bình thường.
+
+**Khác mô tả ban đầu**: Farm Mode dùng RSS feed thay vì điều hướng qua từng
+trang video thật — nhanh hơn nhiều (vài giây/kênh) và không cần "treo máy"
+chờ, nhưng vì vậy chỉ lấy được 15 video gần nhất/kênh (RSS không có
+back-catalog sâu hơn). Nếu cần dữ liệu từ các tập cũ hơn, phải xem thủ công.
+
+## Rủi ro cần biết
 - Cả 2 endpoint (`POST /` và `GET /stats`) **không có auth** — ai biết URL
   đều xem/gửi được. Vì payload chỉ chứa 2 chuỗi tên series (dữ liệu vốn
   public trên YouTube) + 1 số điểm Jaccard, rủi ro thực tế thấp, nhưng

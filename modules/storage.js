@@ -279,6 +279,7 @@ const Storage = (() => {
             collapsed:      getGlobal('collapsed',  false),
             hidden:         getGlobal('hidden',     false),
             panelPos:       getGlobal('panelPos',   null),
+            fontScale:      getGlobal('fontScale',  1),
         };
     }
 
@@ -287,7 +288,7 @@ const Storage = (() => {
     }
 
     // ─── Feature flags (persisted toggles) ───────────────────────────────────
-    /** @returns {{autoPlay,marathon,autoSkip,voiceEnabled,audioMode,pipEnabled,sponsorBlock,watchParty,tvMode,dupTabWarning}} */
+    /** @returns {{autoPlay,marathon,autoSkip,voiceEnabled,audioMode,pipEnabled,sponsorBlock,watchParty,tvMode}} */
     function getFeatureFlags() {
         return {
             autoPlay:     getGlobal('auto',      true),
@@ -301,10 +302,11 @@ const Storage = (() => {
             sponsorBlock: getGlobal('sponsorBlock', false),
             watchParty:   getGlobal('watchParty', false),
             tvMode:        getGlobal('tvMode', false),
-            // Mặc định BẬT SẴN (khác watchParty/tvMode) — đây CHỈ là cảnh báo
-            // thụ động (không sync/điều khiển gì cả), rủi ro gần như 0 nên
-            // không cần bắt user tự bật như các tính năng chủ động hơn.
-            dupTabWarning: getGlobal('dupTabWarning', true),
+            // dupTabWarning ĐÃ BỎ khỏi đây — TabGuard giờ passive hoàn toàn
+            // (luôn enable() thẳng trong entry.js, không đọc/lưu flag này
+            // nữa). Không xoá key cũ khỏi GM storage của user đã từng bật
+            // tắt trước đây (không đáng, vô hại nếu còn sót lại — chỉ đơn
+            // giản không ai đọc nó nữa).
         };
     }
 

@@ -80,6 +80,29 @@ const ChannelDetect = (() => {
     /**
      * Resolve channel cho video hiện tại.
      * Must be called after each yt-navigate-finish, not cached across navigations.
+     *
+     * BUG THẬT ĐÃ FIX (research: đã xác nhận qua nguồn ngoài — YouTube có
+     * pattern "metadata lags navigation": ngay sau `yt-navigate-finish`, URL
+     * đã đổi (`?v=` mới) nhưng phần tử DOM hiển thị metadata — ví dụ tiêu đề
+     * `h1.ytd-watch-metadata` — VẪN CÒN giữ nội dung của video CŨ "trong
+     * chốc lát" trước khi Polymer re-render xong, vì phần tử DOM được TÁI SỬ
+     * DỤNG chứ không tạo mới mỗi lần nav). `ytd-video-owner-renderer` (nơi
+     * `_fromDOM()` đọc tên kênh) nhiều khả năng dính CÙNG pattern này (chưa
+     * có nguồn xác nhận riêng cho chính element này, nhưng đây là hành vi
+     * chung của DOM data-binding trong toàn bộ Polymer app, không phải đặc
+     * thù của 1 element — không có lý do để nó là ngoại lệ). `_fromDOM()`
+     * trước đây được TIN NGAY LẬP TỨC ở lần đọc ĐẦU TIÊN thành công, không
+     * verify gì — nếu bắt trúng đúng "chốc lát" đó, sẽ trả về + CACHE VĨNH
+     * VIỄN tên kênh của video CŨ cho videoId MỚI (cache theo videoId, không
+     * tự sửa lại cho tới khi reload cả trang) — đúng triệu chứng "thỉnh
+     * thoảng mắc kẹt sau SPA nav, không detect được kênh khác".
+     * Sửa: yêu cầu 2 lần đọc DOM LIÊN TIẾP (cách nhau 1 tick retry, ~300ms)
+     * cho kết quả GIỐNG HỆT nhau mới chấp nhận + cache — nếu DOM vẫn đang
+     * "lag" giữa 2 lần đọc, 2 kết quả sẽ khác nhau (giá trị cũ → giá trị
+     * mới) và bị từ chối, vòng lặp tự thử lại tới khi ổn định. Đổi lại: chậm
+     * thêm tối đa ~300ms cho case phải rơi vào nhánh DOM fallback (không xảy
+     * ra nếu `_fromPlayerResponse` đã đủ nhanh/đáng tin — vẫn ưu tiên nhánh
+     * đó trước như cũ), đánh đổi hợp lý để không bao giờ bị SAI VĨNH VIỄN.
      * @param {string} videoId — current video ID (used for per-video dedup only)
      * @returns {Promise<{name:string, id:string|null}>}
      */
@@ -96,12 +119,22 @@ const ChannelDetect = (() => {
             return fast;
         }
 
+        let prevDom = null; // candidate DOM đọc được ở lần lặp TRƯỚC — dùng để xác nhận đã "ổn định"
         for (let i = 0; i < 50; i++) {
             const pr = _fromPlayerResponse(win, videoId);
             if (pr) { if (videoId) _cache.set(videoId, pr); return pr; }
 
             const dom = _fromDOM();
-            if (dom) { if (videoId) _cache.set(videoId, dom); return dom; }
+            if (dom) {
+                if (prevDom && prevDom.name === dom.name && prevDom.id === dom.id) {
+                    // Giống hệt lần đọc trước → coi như đã ổn định, đủ tin cậy để cache.
+                    if (videoId) _cache.set(videoId, dom);
+                    return dom;
+                }
+                // Chưa ổn định (khác lần đọc trước, hoặc đây là lần đầu có
+                // candidate) — CHƯA trả về, ghi nhớ để so sánh ở vòng kế tiếp.
+                prevDom = dom;
+            }
 
             await new Promise(r => setTimeout(r, 300));
         }

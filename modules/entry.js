@@ -10,6 +10,7 @@
 
     let _runToken = 0; // tăng dần mỗi lần _runMain được gọi; dùng để huỷ run cũ
     let _lastVid  = null;
+    let _lastChannel = null; // {name, id} — kênh vừa resolve gần nhất, dùng cho menu "Thêm vào Farm whitelist" (similarity-farm.js) để không bắt user tự gõ tay channel ID
 
     window._vtvParsedInfo = null;
 
@@ -36,6 +37,76 @@
         alert(input.trim() ? '✅ Đã lưu — bắt đầu gửi report ẩn danh từ giờ.' : '✅ Đã tắt Similarity Report.');
     });
 
+    // ── Similarity Farm Mode (thu thập dữ liệu hàng loạt qua RSS feed) ────────
+    // Xem giải thích đầy đủ (bao gồm vì sao dùng RSS thay vì click-qua-video
+    // như mô tả gốc, và giới hạn quota thật 1000 ghi/ngày) ở đầu
+    // similarity-farm.js. 3 menu riêng biệt: thêm kênh hiện tại vào whitelist,
+    // xem/xoá whitelist, và chạy farm (có confirm() rõ ràng trước khi gửi gì).
+    GM_registerMenuCommand('🌾 Farm: Thêm kênh hiện tại vào whitelist', () => {
+        if (!_lastChannel || !_lastChannel.id) {
+            alert('⚠️ Chưa xác định được kênh nào — mở 1 video của kênh muốn thêm rồi thử lại.');
+            return;
+        }
+        const added = SimilarityFarm.addChannel(_lastChannel.name, _lastChannel.id);
+        alert(added
+            ? `✅ Đã thêm "${_lastChannel.name}" vào Farm whitelist.`
+            : `ℹ️ "${_lastChannel.name}" đã có sẵn trong whitelist rồi.`);
+    });
+
+    GM_registerMenuCommand('🌾 Farm: Xem/Xoá kênh trong whitelist', () => {
+        const list = SimilarityFarm.getWhitelist();
+        if (!list.length) { alert('Whitelist đang rỗng.'); return; }
+        const listing = list.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
+        const input = prompt(
+            `Whitelist hiện tại (${list.length} kênh):\n${listing}\n\n` +
+            `Nhập SỐ THỨ TỰ muốn xoá (để trống + OK để đóng, không xoá gì):`,
+            ''
+        );
+        if (!input || !input.trim()) return;
+        const idx = parseInt(input.trim(), 10) - 1;
+        if (Number.isNaN(idx) || idx < 0 || idx >= list.length) { alert('Số thứ tự không hợp lệ.'); return; }
+        SimilarityFarm.removeChannel(list[idx].channelId);
+        alert(`✅ Đã xoá "${list[idx].name}" khỏi whitelist.`);
+    });
+
+    GM_registerMenuCommand('🌾 Farm: Chạy thu thập dữ liệu hàng loạt', async () => {
+        if (!SimilarityReport.isConfigured()) {
+            alert('⚠️ Chưa cấu hình Similarity Report URL — dùng menu "📊 Cấu hình Similarity Report" trước.');
+            return;
+        }
+        if (!SimilarityFarm.getWhitelist().length) {
+            alert('⚠️ Farm whitelist đang rỗng — dùng menu "🌾 Farm: Thêm kênh hiện tại vào whitelist" trước.');
+            return;
+        }
+
+        alert('⏳ Đang tính trước số lượng (fetch RSS từng kênh)... bấm OK rồi đợi 1 lát, sẽ có confirm tiếp theo.');
+        const pre = await SimilarityFarm.preview();
+        const willSend = Math.min(pre.totalPairs, SimilarityFarm._internal.MAX_REPORTS_PER_RUN);
+        const capped = pre.totalPairs > SimilarityFarm._internal.MAX_REPORTS_PER_RUN;
+
+        const confirmed = confirm(
+            `Farm Mode sẽ:\n` +
+            `• Quét ${pre.channels} kênh, tổng ${pre.totalEntries} video gần nhất (tối đa 15/kênh — giới hạn RSS của YouTube)\n` +
+            `• Tính được ${pre.totalPairs} cặp so sánh${capped ? ` — CHỈ GỬI ${willSend} cặp (lấy mẫu ngẫu nhiên, giới hạn 1000 ghi/ngày của Cloudflare KV free tier)` : ''}\n` +
+            `• Gửi ${willSend} report lên Worker của bạn, giãn cách 200ms/report (~${Math.ceil(willSend * 0.2)}s)\n\n` +
+            `Không cần "treo máy" chờ — chạy nền, không điều hướng trang nào. Tiếp tục?`
+        );
+        if (!confirmed) return;
+
+        const result = await SimilarityFarm.run(({ done, total }) => {
+            if (done % 50 === 0 || done === total) log('[SimilarityFarm] tiến độ:', done, '/', total);
+        });
+
+        if (!result.ok) { alert('❌ ' + result.error); return; }
+        alert(
+            `✅ Farm hoàn tất!\n` +
+            `Kênh đã quét: ${result.channelsProcessed}\n` +
+            `Video tổng cộng: ${result.totalEntries}\n` +
+            `Report đã gửi: ${result.sent}${result.capped ? ' (đã lấy mẫu, còn nhiều cặp chưa gửi — chạy lại vào ngày khác để lấy mẫu khác)' : ''}\n\n` +
+            `Xem kết quả tại: <worker-url>/stats`
+        );
+    });
+
     // ─── Restore persisted feature states ────────────────────────────────────
     const _initFlags = Storage.getFeatureFlags();
     if (_initFlags.marathon)     { document.body.classList.add('vtv-marathon'); AdBlock.start(); }
@@ -43,7 +114,12 @@
     if (_initFlags.pipEnabled)   AutoPiP.enable();
     if (_initFlags.audioMode)    AudioMode.enable();
     if (_initFlags.watchParty)   WatchParty.enable();
-    if (_initFlags.dupTabWarning) TabGuard.enable();
+    // TabGuard — PASSIVE, không có công tắc bật/tắt (theo yêu cầu): luôn
+    // enable() ngay, không đọc từ _initFlags/GM_setValue nữa. Rủi ro gần
+    // như 0 (chỉ cảnh báo thụ động, không điều khiển gì), không đáng bắt
+    // user phải quan tâm bật/tắt — xem TOGGLE_DEFS trong ui.js đã bỏ hẳn
+    // 'dupTabWarning' khỏi danh sách toggle.
+    TabGuard.enable();
 
     // ─── Global EventBus wires (registered once) ──────────────────────────────
 
@@ -145,7 +221,10 @@
     EventBus.on('modeChange', ({ key, value }) => {
         if (key === 'marathon') document.body.classList.toggle('vtv-marathon', value);
     });
-    EventBus.on('channelReady', ({ channelName }) => log('[Entry] channel:', channelName));
+    EventBus.on('channelReady', ({ channelName, channelId }) => {
+        log('[Entry] channel:', channelName);
+        _lastChannel = { name: channelName, id: channelId };
+    });
     EventBus.on('seeked',       ({ from, to }) => log('[Entry] seeked', from, '→', to));
     EventBus.on('error',        ({ context, err }) => warn('[Entry] error in', context, err));
 

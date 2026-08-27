@@ -515,6 +515,6 @@ const EpisodeEngine = (() => {
 
     return {
         run, findNext, findPrevious, invalidateList,
-        _internal: { _seriesMatch, _jaccardSimilarity, _jaccardRaw },
+        _internal: { _seriesMatch, _jaccardSimilarity, _jaccardRaw, JACCARD_THRESHOLD },
     };
 })();
