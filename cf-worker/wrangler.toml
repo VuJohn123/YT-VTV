@@ -6,4 +6,4 @@ compatibility_date = "2026-08-01"
 # rồi dán "id" (và "preview_id" nếu dùng wrangler dev) mà lệnh trên in ra vào đây.
 [[kv_namespaces]]
 binding = "SIMILARITY_REPORTS"
-id = "8e7e7828623e48b1a125a5466136a899"
+id = "DÁN_ID_KV_NAMESPACE_CỦA_BẠN_VÀO_ĐÂY"

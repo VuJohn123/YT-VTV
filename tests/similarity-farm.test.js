@@ -1,16 +1,29 @@
 // tests/similarity-farm.test.js — Farm Mode: parse RSS feed thật (mẫu XML
 // đúng format YouTube trả về), sampling không thiên lệch khi vượt cap, và
-// whitelist add/remove/dedupe.
+// whitelist = seed list VTV mặc định (VTV_KNOWN_CHANNELS, utils.js) + kênh
+// user tự thêm/loại trừ — user KHÔNG cần tự thêm gì mới chạy farm được
+// ngay (feedback thật: "tự nhiên lại phải thêm whitelist... chỉ cần là 1
+// list các kênh VTV đã biết trước").
 const { loadModule } = require('./lib/loadModule');
 const { suite, test, run, assertEqual, assertTrue, assertFalse } = require('./lib/tap');
 
+const FAKE_SEEDS = [
+    { id: 'UCseed1', name: 'VTV Giải Trí Official' },
+    { id: 'UCseed2', name: 'VFC Official' },
+];
+
 function setupMocks(storeOverrides = {}) {
     global.log = () => {}; global.warn = () => {};
-    const store = { similarityFarmWhitelist: '[]', similarityReportUrl: '', ...storeOverrides };
+    const store = { similarityFarmWhitelist: '[]', similarityFarmExcludedSeeds: '[]', similarityReportUrl: '', ...storeOverrides };
     global.Storage = {
         getGlobal: (k, d) => (k in store ? store[k] : d),
         setGlobal: (k, v) => { store[k] = v; },
     };
+    // Mock VTV_KNOWN_CHANNELS thay vì dùng danh sách thật của utils.js — test
+    // module này độc lập với nội dung thật của seed list (nội dung thật đã
+    // có test riêng ở tests/channel-filter.test.js), chỉ cần biết CƠ CHẾ
+    // seed+exclude+user-added hoạt động đúng.
+    global.VTV_KNOWN_CHANNELS = FAKE_SEEDS;
     return store;
 }
 
@@ -48,7 +61,7 @@ const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
   </entry>
 </feed>`;
 
-suite('SimilarityFarm — parse RSS thật + sampling + whitelist (similarity-farm.js)');
+suite('SimilarityFarm — parse RSS + sampling + seed list VTV mặc định + run() (similarity-farm.js)');
 
 test('_parseFeed(): parse đúng title/description từ RSS thật của YouTube, xử lý CDATA và entity escape', () => {
     setupMocks();
@@ -76,37 +89,94 @@ test('_sampleDown(): cắt đúng xuống n phần tử khi mảng lớn hơn ca
     const arr = Array.from({ length: 1000 }, (_, i) => i);
     const result = SimilarityFarm._internal._sampleDown(arr, 800);
     assertEqual(result.length, 800, 'phải cắt đúng xuống đúng cap');
-    // Không thiên lệch: phải KHÔNG PHẢI luôn là 800 phần tử ĐẦU (nếu sampling
-    // đúng ngẫu nhiên, xác suất cực thấp mà kết quả trùng khớp y hệt dãy đầu).
     const isJustFirst800 = result.every((v, i) => v === i);
     assertFalse(isJustFirst800, 'không được luôn lấy N phần tử ĐẦU tiên theo thứ tự — phải xáo trộn ngẫu nhiên trước khi cắt');
 });
 
-test('addChannel()/getWhitelist()/removeChannel(): thêm, dedupe theo channelId, xoá đúng', () => {
-    const store = setupMocks();
+// (thu gọn còn 1 suite() duy nhất cho cả file — suite() reset danh sách
+// test tích luỹ, gọi nhiều lần trong 1 file sẽ LÀM MẤT các test đã đăng ký
+// trước đó, xem tests/lib/tap.js)
+
+test('getWhitelist(): NGAY TỪ ĐẦU (chưa thêm gì) đã có sẵn toàn bộ seed list VTV — không phải rỗng', () => {
+    setupMocks();
     const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    const wl = SimilarityFarm.getWhitelist();
 
-    assertTrue(SimilarityFarm.addChannel('VTV Giải Trí Official', 'UCvtv123'));
-    assertEqual(SimilarityFarm.getWhitelist().length, 1);
-
-    assertFalse(SimilarityFarm.addChannel('VTV Giải Trí Official (tên khác)', 'UCvtv123'), 'cùng channelId → không thêm trùng dù tên khác');
-    assertEqual(SimilarityFarm.getWhitelist().length, 1, 'vẫn chỉ 1 kênh sau khi thử thêm trùng');
-
-    SimilarityFarm.addChannel('Kênh Khác', 'UCkhac456');
-    assertEqual(SimilarityFarm.getWhitelist().length, 2);
-
-    SimilarityFarm.removeChannel('UCvtv123');
-    const remaining = SimilarityFarm.getWhitelist();
-    assertEqual(remaining.length, 1);
-    assertEqual(remaining[0].channelId, 'UCkhac456');
+    assertEqual(wl.length, FAKE_SEEDS.length, 'whitelist mặc định phải chứa ĐÚNG toàn bộ seed list, không cần user thêm gì');
+    assertTrue(wl.every(c => c.seed === true), 'mọi kênh trong whitelist mặc định phải được đánh dấu seed:true');
+    assertTrue(wl.some(c => c.channelId === 'UCseed1'));
+    assertTrue(wl.some(c => c.channelId === 'UCseed2'));
 });
 
-test('run(): whitelist rỗng → trả lỗi rõ ràng, KHÔNG throw, KHÔNG gọi GM_xmlhttpRequest', async () => {
+test('addChannel(): thêm kênh MỚI (không phải seed) → seed list giữ nguyên, kênh mới có seed:false', () => {
+    setupMocks();
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+
+    assertTrue(SimilarityFarm.addChannel('Kênh User Tự Thêm', 'UCuser1'));
+    const wl = SimilarityFarm.getWhitelist();
+    assertEqual(wl.length, FAKE_SEEDS.length + 1, 'phải có thêm đúng 1 kênh, không mất seed nào');
+    const added = wl.find(c => c.channelId === 'UCuser1');
+    assertTrue(!!added);
+    assertEqual(added.seed, false, 'kênh user tự thêm phải đánh dấu seed:false');
+});
+
+test('addChannel(): thêm trùng ID với 1 kênh SEED đã có sẵn → không thêm trùng (return false)', () => {
+    setupMocks();
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+
+    assertFalse(SimilarityFarm.addChannel('Tên khác', 'UCseed1'), 'UCseed1 đã có sẵn trong seed list → không thêm trùng');
+    assertEqual(SimilarityFarm.getWhitelist().length, FAKE_SEEDS.length, 'whitelist không phình ra thêm');
+});
+
+test('removeChannel(): loại 1 kênh SEED khỏi farm → biến mất khỏi whitelist NHƯNG không đụng gì tới VTV_KNOWN_CHANNELS gốc', () => {
+    setupMocks();
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+
+    SimilarityFarm.removeChannel('UCseed1');
+    const wl = SimilarityFarm.getWhitelist();
+    assertEqual(wl.length, FAKE_SEEDS.length - 1, 'whitelist thực tế phải giảm 1');
+    assertFalse(wl.some(c => c.channelId === 'UCseed1'));
+    assertEqual(FAKE_SEEDS.length, 2, 'mảng seed gốc phải nguyên vẹn, không bị mutate');
+});
+
+test('addChannel(): thêm lại đúng ID của 1 seed đã bị loại trước đó → "un-exclude" (khôi phục), KHÔNG tạo bản ghi trùng', () => {
+    setupMocks();
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+
+    SimilarityFarm.removeChannel('UCseed1');
+    assertEqual(SimilarityFarm.getWhitelist().length, 1, 'sau khi loại, chỉ còn 1 kênh (UCseed2)');
+
+    assertTrue(SimilarityFarm.addChannel('VTV Giải Trí Official', 'UCseed1'), 'thêm lại đúng ID seed đã loại → phải thành công (un-exclude)');
+    const wl = SimilarityFarm.getWhitelist();
+    assertEqual(wl.length, 2, 'phải trở lại đủ 2 kênh');
+    const restored = wl.find(c => c.channelId === 'UCseed1');
+    assertEqual(restored.seed, true, 'kênh được khôi phục vẫn phải là seed:true (không biến thành user-added trùng lặp)');
+    assertEqual(wl.filter(c => c.channelId === 'UCseed1').length, 1);
+});
+
+test('removeChannel(): xoá kênh USER tự thêm → xoá thẳng, không ảnh hưởng seed list', () => {
+    setupMocks();
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+
+    SimilarityFarm.addChannel('Kênh User', 'UCuser1');
+    assertEqual(SimilarityFarm.getWhitelist().length, FAKE_SEEDS.length + 1);
+
+    SimilarityFarm.removeChannel('UCuser1');
+    const wl = SimilarityFarm.getWhitelist();
+    assertEqual(wl.length, FAKE_SEEDS.length, 'trở lại đúng số seed ban đầu');
+    assertTrue(wl.every(c => c.seed === true), 'toàn bộ còn lại đều phải là seed (không sót kênh user nào)');
+});
+
+test('run(): whitelist rỗng (đã loại trừ HẾT seed, không tự thêm gì) → trả lỗi rõ ràng, KHÔNG throw, KHÔNG gọi GM_xmlhttpRequest', async () => {
     setupMocks({ similarityReportUrl: 'https://worker.example.com' });
     let fetchCalled = false;
     global.GM_xmlhttpRequest = () => { fetchCalled = true; };
 
     const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    SimilarityFarm.removeChannel('UCseed1');
+    SimilarityFarm.removeChannel('UCseed2');
+    assertEqual(SimilarityFarm.getWhitelist().length, 0, 'setup: whitelist phải thật sự rỗng trước khi test run()');
+
     const result = await SimilarityFarm.run();
 
     assertFalse(result.ok);
@@ -114,8 +184,8 @@ test('run(): whitelist rỗng → trả lỗi rõ ràng, KHÔNG throw, KHÔNG g�
     assertFalse(fetchCalled, 'không được gọi fetch gì khi whitelist rỗng');
 });
 
-test('run(): chưa cấu hình SimilarityReport URL → trả lỗi rõ ràng, không fetch RSS phí công', () => {
-    const store = setupMocks({ similarityFarmWhitelist: JSON.stringify([{ name: 'X', channelId: 'UC1' }]) });
+test('run(): chưa cấu hình SimilarityReport URL → trả lỗi rõ ràng, không fetch RSS phí công (dù seed list mặc định vẫn có sẵn)', () => {
+    setupMocks(); // seed list mặc định có sẵn ngay, KHÔNG cần similarityFarmWhitelist
     let fetchCalled = false;
     global.GM_xmlhttpRequest = () => { fetchCalled = true; };
     global.EpisodeEngine = { _internal: { _jaccardRaw: () => ({ score: 0 }), JACCARD_THRESHOLD: 0.5 } };
@@ -129,26 +199,21 @@ test('run(): chưa cấu hình SimilarityReport URL → trả lỗi rõ ràng, k
     });
 });
 
-test('run(): 1 kênh 3 video → đúng C(3,2)=3 report được gửi, với đúng ngưỡng JACCARD_THRESHOLD thật', async () => {
-    setupMocks({
-        similarityFarmWhitelist: JSON.stringify([{ name: 'Kênh Test', channelId: 'UCtest' }]),
-        similarityReportUrl: 'https://worker.example.com',
-    });
+test('run(): dùng NGAY seed list mặc định (không thêm gì) → farm cả 2 kênh seed, đúng tổng số cặp và ngưỡng JACCARD_THRESHOLD thật', async () => {
+    setupMocks({ similarityReportUrl: 'https://worker.example.com' }); // KHÔNG set similarityFarmWhitelist — đúng tình huống thật của user mới cài, chưa thêm gì
     global.GM_xmlhttpRequest = (opts) => {
-        opts.onload({ status: 200, responseText: SAMPLE_RSS });
+        opts.onload({ status: 200, responseText: SAMPLE_RSS }); // cả 2 kênh trả về CÙNG 3 video mẫu cho đơn giản
     };
     global.SimilarityReport = { isConfigured: () => true, report: () => {} };
     global.EpisodeEngine = {
         _internal: {
             JACCARD_THRESHOLD: 0.5,
             _jaccardRaw: (a, b) => {
-                // Giả lập đơn giản: "giống nhau" nếu chia sẻ từ đầu tiên.
                 const same = a.split(' ')[0] === b.split(' ')[0];
                 return { score: same ? 0.9 : 0.1, sizeA: 3, sizeB: 3, intersection: same ? 3 : 0, union: 3 };
             },
         },
     };
-
     const reported = [];
     global.SimilarityReport.report = (d) => reported.push(d);
 
@@ -156,11 +221,11 @@ test('run(): 1 kênh 3 video → đúng C(3,2)=3 report được gửi, với đ
     const result = await SimilarityFarm.run();
 
     assertTrue(result.ok);
-    assertEqual(result.totalEntries, 3);
-    assertEqual(result.totalPossiblePairs, 3, 'C(3,2) = 3 cặp');
-    assertEqual(result.sent, 3);
-    assertEqual(reported.length, 3, 'phải gọi SimilarityReport.report() đúng 3 lần');
-    assertEqual(reported[0].source, 'jaccard');
+    assertEqual(result.channelsProcessed, 2, 'phải tự động farm CẢ 2 kênh seed mặc định, không cần user thêm gì');
+    assertEqual(result.totalEntries, 6, '2 kênh × 3 video/kênh (mock)');
+    assertEqual(result.totalPossiblePairs, 6, '2 kênh × C(3,2)=3 cặp/kênh = 6');
+    assertEqual(result.sent, 6);
+    assertEqual(reported.length, 6);
 });
 
 run().then(() => process.exit(process.exitCode || 0));

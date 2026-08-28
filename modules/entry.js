@@ -40,8 +40,12 @@
     // ── Similarity Farm Mode (thu thập dữ liệu hàng loạt qua RSS feed) ────────
     // Xem giải thích đầy đủ (bao gồm vì sao dùng RSS thay vì click-qua-video
     // như mô tả gốc, và giới hạn quota thật 1000 ghi/ngày) ở đầu
-    // similarity-farm.js. 3 menu riêng biệt: thêm kênh hiện tại vào whitelist,
-    // xem/xoá whitelist, và chạy farm (có confirm() rõ ràng trước khi gửi gì).
+    // similarity-farm.js. 3 menu riêng biệt: thêm kênh MỚI (ngoài seed) vào
+    // whitelist, xem/loại kênh (seed lẫn tự thêm), và chạy farm (có
+    // confirm() rõ ràng trước khi gửi gì). Whitelist LUÔN CÓ SẴN toàn bộ
+    // VTV_KNOWN_CHANNELS (utils.js) ngay từ đầu — không cần bấm menu nào
+    // trước khi chạy farm lần đầu (feedback thật của user: "tự nhiên lại
+    // phải thêm whitelist... chỉ cần là 1 list các kênh VTV đã biết trước").
     GM_registerMenuCommand('🌾 Farm: Thêm kênh hiện tại vào whitelist', () => {
         if (!_lastChannel || !_lastChannel.id) {
             alert('⚠️ Chưa xác định được kênh nào — mở 1 video của kênh muốn thêm rồi thử lại.');
@@ -50,23 +54,26 @@
         const added = SimilarityFarm.addChannel(_lastChannel.name, _lastChannel.id);
         alert(added
             ? `✅ Đã thêm "${_lastChannel.name}" vào Farm whitelist.`
-            : `ℹ️ "${_lastChannel.name}" đã có sẵn trong whitelist rồi.`);
+            : `ℹ️ "${_lastChannel.name}" đã có sẵn trong whitelist rồi (kênh VTV mặc định hoặc đã tự thêm trước đó).`);
     });
 
-    GM_registerMenuCommand('🌾 Farm: Xem/Xoá kênh trong whitelist', () => {
+    GM_registerMenuCommand('🌾 Farm: Xem/Loại kênh trong whitelist', () => {
         const list = SimilarityFarm.getWhitelist();
-        if (!list.length) { alert('Whitelist đang rỗng.'); return; }
-        const listing = list.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
+        if (!list.length) { alert('Whitelist đang rỗng (đã loại hết kênh VTV mặc định lẫn không tự thêm gì).'); return; }
+        // Đánh dấu rõ kênh nào là mặc định (seed:true, từ VTV_KNOWN_CHANNELS)
+        // để user biết "Loại" 1 kênh mặc định KHÔNG xoá nó khỏi việc nhận
+        // diện kênh VTV khi xem phim bình thường — chỉ loại khỏi Farm Mode.
+        const listing = list.map((c, i) => `${i + 1}. ${c.name}${c.seed ? ' (mặc định)' : ''}`).join('\n');
         const input = prompt(
-            `Whitelist hiện tại (${list.length} kênh):\n${listing}\n\n` +
-            `Nhập SỐ THỨ TỰ muốn xoá (để trống + OK để đóng, không xoá gì):`,
+            `Whitelist hiện tại (${list.length} kênh — "(mặc định)" = có sẵn từ đầu, loại chỉ ảnh hưởng Farm Mode, không ảnh hưởng nhận diện kênh VTV khi xem phim):\n${listing}\n\n` +
+            `Nhập SỐ THỨ TỰ muốn loại khỏi Farm (để trống + OK để đóng, không đổi gì):`,
             ''
         );
         if (!input || !input.trim()) return;
         const idx = parseInt(input.trim(), 10) - 1;
         if (Number.isNaN(idx) || idx < 0 || idx >= list.length) { alert('Số thứ tự không hợp lệ.'); return; }
         SimilarityFarm.removeChannel(list[idx].channelId);
-        alert(`✅ Đã xoá "${list[idx].name}" khỏi whitelist.`);
+        alert(`✅ Đã loại "${list[idx].name}" khỏi Farm whitelist.`);
     });
 
     GM_registerMenuCommand('🌾 Farm: Chạy thu thập dữ liệu hàng loạt', async () => {
@@ -75,7 +82,7 @@
             return;
         }
         if (!SimilarityFarm.getWhitelist().length) {
-            alert('⚠️ Farm whitelist đang rỗng — dùng menu "🌾 Farm: Thêm kênh hiện tại vào whitelist" trước.');
+            alert('⚠️ Farm whitelist đang rỗng — có vẻ bạn đã chủ động loại hết cả kênh VTV mặc định. Dùng menu "🌾 Farm: Xem/Loại kênh trong whitelist" để thêm lại (nhập đúng tên kênh muốn khôi phục qua menu "Thêm kênh hiện tại"), hoặc mở 1 video rồi dùng menu "Thêm kênh hiện tại vào whitelist".');
             return;
         }
 
@@ -86,7 +93,7 @@
 
         const confirmed = confirm(
             `Farm Mode sẽ:\n` +
-            `• Quét ${pre.channels} kênh, tổng ${pre.totalEntries} video gần nhất (tối đa 15/kênh — giới hạn RSS của YouTube)\n` +
+            `• Quét ${pre.channels} kênh (mặc định VTV + kênh bạn tự thêm nếu có), tổng ${pre.totalEntries} video gần nhất (tối đa 15/kênh — giới hạn RSS của YouTube)\n` +
             `• Tính được ${pre.totalPairs} cặp so sánh${capped ? ` — CHỈ GỬI ${willSend} cặp (lấy mẫu ngẫu nhiên, giới hạn 1000 ghi/ngày của Cloudflare KV free tier)` : ''}\n` +
             `• Gửi ${willSend} report lên Worker của bạn, giãn cách 200ms/report (~${Math.ceil(willSend * 0.2)}s)\n\n` +
             `Không cần "treo máy" chờ — chạy nền, không điều hướng trang nào. Tiếp tục?`

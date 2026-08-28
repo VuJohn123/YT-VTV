@@ -76,12 +76,21 @@ wrangler kv key get --binding=SIMILARITY_REPORTS "report:<timestamp>:<suffix>"
 
 ## 4. Farm Mode — thu thập dữ liệu hàng loạt (tuỳ chọn)
 
+**Whitelist LUÔN CÓ SẴN toàn bộ kênh VTV đã biết** (`VTV_KNOWN_CHANNELS`,
+`modules/utils.js` — cùng danh sách dùng để nhận diện kênh VTV khi xem phim
+bình thường) — không cần bấm menu nào trước khi chạy farm lần đầu.
+
 Ngoài report tự động khi xem phim bình thường, có thêm 3 menu Tampermonkey
 để thu thập NHANH hơn nhiều (`similarity-farm.js`):
 
-- **🌾 Farm: Thêm kênh hiện tại vào whitelist** — mở 1 video của kênh muốn
-  farm rồi bấm menu này, tự lấy đúng channel ID, không cần tự gõ tay.
-- **🌾 Farm: Xem/Xoá kênh trong whitelist**
+- **🌾 Farm: Thêm kênh hiện tại vào whitelist** — CHỈ cần dùng khi muốn MỞ
+  RỘNG thêm 1 kênh ngoài danh sách VTV mặc định (mở 1 video của kênh muốn
+  thêm rồi bấm menu này, tự lấy đúng channel ID, không cần tự gõ tay).
+- **🌾 Farm: Xem/Loại kênh trong whitelist** — xem toàn bộ (đánh dấu rõ kênh
+  nào là "(mặc định)"), và loại bớt 1 kênh cụ thể khỏi Farm (ví dụ lo ngại
+  1 kênh nào đó kéo lệch tỉ lệ match) — loại 1 kênh mặc định khỏi Farm
+  KHÔNG ảnh hưởng gì tới việc nhận diện kênh VTV khi xem phim bình thường
+  (2 việc tách riêng, xem comment `getWhitelist()` trong `similarity-farm.js`).
 - **🌾 Farm: Chạy thu thập dữ liệu hàng loạt** — quét RSS feed công khai của
   từng kênh trong whitelist (tối đa 15 video gần nhất/kênh — giới hạn cứng
   của YouTube), so sánh pairwise mọi cặp video TRONG CÙNG 1 kênh, gửi report.

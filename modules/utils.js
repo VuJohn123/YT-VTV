@@ -39,12 +39,30 @@ const VTV_CHANNEL_PATTERNS = [
 // không đổi được). Dùng làm lớp xác thực BỔ SUNG khi có sẵn channel ID trong
 // dữ liệu (ví dụ từ ytInitialPlayerResponse.videoDetails.channelId) — không
 // thay thế hoàn toàn regex vì không phải lúc nào cũng lấy được ID kịp thời.
-const VTV_CHANNEL_IDS = new Set([
-    'UCRLKY3loGMTmFLGO0BWQVeg',  // VTV1
-    'UCfxbE4_BAlry2GFoNLDXPRA',  // VTV Go
-    'UClpDH7RTC9kEK96DEQDUnfQ',  // Phim Truyền Hình Việt Nam
-    'UCevx3UR91JjIpjD6eYW_2MA',  // Ấn tượng VTV
-]);
+//
+// Cấu trúc {id, name} thay vì Set trần các ID — để similarity-farm.js
+// (Farm Mode) dùng LÀM LUÔN danh sách kênh mặc định sẵn có (seed list),
+// không cần user tự gõ tay từng kênh mới bắt đầu farm được, và không tạo ra
+// 1 danh sách tên kênh THỨ HAI trùng lặp dễ lệch dữ liệu với danh sách này
+// theo thời gian (sửa 1 chỗ, cả isVTVChannel() lẫn Farm Mode đều tự cập nhật).
+// VTV_CHANNEL_IDS (Set thuần ID) bên dưới CHỈ để giữ nguyên chữ ký cũ cho
+// isVTVChannel() — không phải nguồn dữ liệu chính, luôn derive từ đây.
+//
+// Đã research xác nhận 2 ID QUAN TRỌNG NHẤT nhưng trước đây THIẾU hẳn khỏi
+// whitelist ID (trước giờ chỉ được nhận diện qua regex tên — yếu hơn, vì
+// tên hiển thị đổi được): "VTV Giải Trí Official" (kênh chính, xuất hiện
+// xuyên suốt toàn bộ script) và "VFC Official" (trung tâm sản xuất, nơi
+// phim VTV Giải Trí thường re-upload gốc từ đó — xem comment ở
+// VTV_CHANNEL_PATTERNS phía trên).
+const VTV_KNOWN_CHANNELS = [
+    { id: 'UCuJ5k3GndbHnXLYyiIR6Z8Q', name: 'VTV Giải Trí Official' },
+    { id: 'UCTAx9EFsYklqNCs5pBjbn2w', name: 'VFC Official' },
+    { id: 'UCRLKY3loGMTmFLGO0BWQVeg', name: 'VTV1' },
+    { id: 'UCfxbE4_BAlry2GFoNLDXPRA', name: 'VTV Go' },
+    { id: 'UClpDH7RTC9kEK96DEQDUnfQ', name: 'Phim Truyền Hình Việt Nam' },
+    { id: 'UCevx3UR91JjIpjD6eYW_2MA', name: 'Ấn tượng VTV' },
+];
+const VTV_CHANNEL_IDS = new Set(VTV_KNOWN_CHANNELS.map(c => c.id));
 
 // Canonical channel cho search queries — luôn dùng cái này khi build query
 const SEARCH_CHANNEL_HINT = 'VTV Giải Trí';

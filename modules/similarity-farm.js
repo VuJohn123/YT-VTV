@@ -39,33 +39,94 @@
 // cắt thô theo thứ tự duyệt (tránh thiên lệch luôn ưu tiên kênh/video đứng
 // trước trong whitelist).
 
+// "Tự nhiên lại phải thêm whitelist" (feedback thật của user): SỬA LẠI —
+// whitelist giờ LUÔN SẴN CÓ danh sách kênh VTV đã biết (VTV_KNOWN_CHANNELS,
+// utils.js — CÙNG 1 nguồn isVTVChannel() đang dùng, không tạo danh sách
+// trùng lặp thứ 2), user KHÔNG cần tự thêm gì mới chạy farm được ngay. User
+// chỉ thêm/bớt khi muốn MỞ RỘNG hoặc LOẠI BỚT 1 kênh mặc định cụ thể (ví dụ
+// lo ngại 1 kênh nào đó kéo lệch tỉ lệ match — xem comment ở removeChannel()
+// về cách "loại bỏ" 1 kênh mặc định mà KHÔNG xoá được nó khỏi
+// VTV_KNOWN_CHANNELS, vì danh sách đó dùng chung với isVTVChannel()).
+
 const SimilarityFarm = (() => {
-    const WHITELIST_KEY = 'similarityFarmWhitelist'; // JSON array of {name, channelId}
+    const USER_LIST_KEY = 'similarityFarmWhitelist';   // JSON array of {name, channelId} — kênh user TỰ thêm, KHÔNG có trong VTV_KNOWN_CHANNELS
+    const EXCLUDED_KEY  = 'similarityFarmExcludedSeeds'; // JSON array of channelId — kênh mặc định (seed) mà user chọn LOẠI khỏi farm
     const MAX_REPORTS_PER_RUN = 800; // xem giải thích quota ở comment đầu file — cố tình < 1000 (giới hạn ghi/ngày thật của Cloudflare KV free tier)
     const REPORT_DELAY_MS = 200; // giãn cách giữa các report — free tier không throttle theo giây (chỉ hard-cap theo ngày), nhưng vẫn là hành vi tốt, tránh burst dồn dập vô ích
 
-    function _getWhitelist() {
+    function _getUserList() {
         try {
-            const parsed = JSON.parse(Storage.getGlobal(WHITELIST_KEY, '[]'));
+            const parsed = JSON.parse(Storage.getGlobal(USER_LIST_KEY, '[]'));
             return Array.isArray(parsed) ? parsed : [];
         } catch (e) { return []; }
     }
-    function _saveWhitelist(list) {
-        Storage.setGlobal(WHITELIST_KEY, JSON.stringify(list));
+    function _saveUserList(list) {
+        Storage.setGlobal(USER_LIST_KEY, JSON.stringify(list));
+    }
+    function _getExcluded() {
+        try {
+            const parsed = JSON.parse(Storage.getGlobal(EXCLUDED_KEY, '[]'));
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (e) { return []; }
+    }
+    function _saveExcluded(list) {
+        Storage.setGlobal(EXCLUDED_KEY, JSON.stringify(list));
+    }
+
+    /**
+     * Whitelist THẬT SỰ dùng khi chạy farm = (VTV_KNOWN_CHANNELS trừ những
+     * cái đã bị exclude) HỢP với (kênh user tự thêm). VTV_KNOWN_CHANNELS
+     * (utils.js) không lưu trạng thái exclude ngay trong nó — nó là hằng số
+     * dùng chung với isVTVChannel(), sửa trực tiếp ở đó sẽ ảnh hưởng luôn cả
+     * việc NHẬN DIỆN kênh khi xem phim bình thường (không liên quan gì tới
+     * farm) — 2 mối quan tâm khác nhau, tách riêng bằng excluded-list riêng
+     * của Farm Mode thay vì đụng vào utils.js mỗi lần user muốn loại 1 kênh
+     * khỏi farm.
+     */
+    function getWhitelist() {
+        const excluded = new Set(_getExcluded());
+        const seeds = VTV_KNOWN_CHANNELS
+            .filter(c => !excluded.has(c.id))
+            .map(c => ({ name: c.name, channelId: c.id, seed: true }));
+        const userAdded = _getUserList().map(c => ({ ...c, seed: false }));
+        return [...seeds, ...userAdded];
     }
 
     function addChannel(name, channelId) {
         if (!channelId) return false;
-        const list = _getWhitelist();
-        if (list.some(c => c.channelId === channelId)) return false; // đã có, không thêm trùng
+        // Nếu trước đây user đã loại kênh mặc định này ra rồi đổi ý muốn
+        // thêm lại — coi như "un-exclude" thay vì thêm y hệt 1 bản ghi
+        // trùng ID vào danh sách user tự thêm (2 bản ghi cùng ID sẽ khiến
+        // farm chạy pairwise LẶP LẠI với chính kênh đó — sai).
+        const excluded = _getExcluded();
+        if (excluded.includes(channelId)) {
+            _saveExcluded(excluded.filter(id => id !== channelId));
+            return true;
+        }
+        if (getWhitelist().some(c => c.channelId === channelId)) return false; // đã có sẵn (seed hoặc user), không thêm trùng
+        const list = _getUserList();
         list.push({ name: name || channelId, channelId });
-        _saveWhitelist(list);
+        _saveUserList(list);
         return true;
     }
+
+    /**
+     * Loại 1 kênh khỏi farm. Với kênh MẶC ĐỊNH (seed, từ VTV_KNOWN_CHANNELS)
+     * — không thể xoá thẳng khỏi VTV_KNOWN_CHANNELS (dùng chung với
+     * isVTVChannel(), xem comment ở getWhitelist()) nên ghi vào danh sách
+     * loại trừ riêng của Farm Mode; addChannel() lại chính ID đó sẽ tự
+     * "un-exclude" (xem comment ở addChannel()). Với kênh user TỰ thêm — xoá
+     * thẳng khỏi danh sách của user như bình thường.
+     */
     function removeChannel(channelId) {
-        _saveWhitelist(_getWhitelist().filter(c => c.channelId !== channelId));
+        const isSeed = VTV_KNOWN_CHANNELS.some(c => c.id === channelId);
+        if (isSeed) {
+            const excluded = _getExcluded();
+            if (!excluded.includes(channelId)) _saveExcluded([...excluded, channelId]);
+            return;
+        }
+        _saveUserList(_getUserList().filter(c => c.channelId !== channelId));
     }
-    function getWhitelist() { return _getWhitelist(); }
 
     /**
      * Parse RSS XML (feed videos.xml) → [{title, description}]. Dùng regex
@@ -136,8 +197,8 @@ const SimilarityFarm = (() => {
      * mới/ít video) — không đoán mù bằng cách giả định luôn đúng 15.
      */
     async function preview() {
-        const whitelist = _getWhitelist();
-        if (!whitelist.length) return { channels: 0, totalEntries: 0, totalPairs: 0 };
+        const whitelist = getWhitelist();
+        if (!whitelist.length) return { channels: 0, totalEntries: 0, totalPairs: 0 }; // whitelist rỗng khi user đã loại trừ HẾT seed lẫn không tự thêm gì — hiếm, vì mặc định luôn có VTV_KNOWN_CHANNELS
         let totalEntries = 0, totalPairs = 0;
         for (const ch of whitelist) {
             const entries = await _fetchFeed(ch.channelId);
@@ -154,8 +215,8 @@ const SimilarityFarm = (() => {
      * @param {(progress:{done:number,total:number})=>void} [onProgress]
      */
     async function run(onProgress) {
-        const whitelist = _getWhitelist();
-        if (!whitelist.length) return { ok: false, error: 'Whitelist rỗng — thêm kênh trước khi chạy farm.' };
+        const whitelist = getWhitelist();
+        if (!whitelist.length) return { ok: false, error: 'Whitelist rỗng (kể cả sau khi tính seed list) — thêm kênh hoặc bỏ loại trừ hết seed trước khi chạy farm.' };
         if (!SimilarityReport.isConfigured()) return { ok: false, error: 'Chưa cấu hình Similarity Report URL — không có gì để gửi đi.' };
 
         const perChannelEntries = [];
