@@ -228,4 +228,63 @@ test('run(): dùng NGAY seed list mặc định (không thêm gì) → farm cả
     assertEqual(reported.length, 6);
 });
 
+// ── Bug thật user gặp (ảnh chụp): "Farm hoàn tất! Video tổng cộng: 0" cho
+// CẢ 6/6 kênh — trước đây code coi đây là ok:true (thành công) dù rõ ràng
+// bất thường (không thể trùng hợp cả 6 kênh cùng lúc không có video nào).
+// Root cause thật của TẠI SAO fetch trả 0 (mạng/CORS/RSS đổi format...)
+// KHÔNG xác nhận được từ môi trường test (cần trình duyệt thật) — test này
+// chỉ xác nhận phần chắc chắn sửa được: không còn báo "thành công" giả khi
+// mọi kênh đều 0 video.
+
+test('preview(): TẤT CẢ kênh đều trả về 0 video → đánh dấu likelyFetchFailure:true, KHÔNG coi là bình thường', async () => {
+    setupMocks();
+    global.GM_xmlhttpRequest = (opts) => {
+        opts.onload({ status: 200, responseText: '<feed></feed>' }); // response "hợp lệ" (status 2xx) nhưng không có <entry> nào — mô phỏng đúng bug thật
+    };
+
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    const pre = await SimilarityFarm.preview();
+
+    assertEqual(pre.channels, FAKE_SEEDS.length);
+    assertEqual(pre.totalEntries, 0);
+    assertTrue(pre.likelyFetchFailure, 'toàn bộ kênh 0 video → phải đánh dấu rõ đây là dấu hiệu lỗi, không phải kết quả bình thường');
+});
+
+test('preview(): CHỈ 1 trong nhiều kênh trả về 0 video (kênh khác vẫn có) → KHÔNG đánh dấu likelyFetchFailure (đây là tình huống bình thường)', async () => {
+    setupMocks();
+    let callCount = 0;
+    global.GM_xmlhttpRequest = (opts) => {
+        callCount++;
+        // Kênh đầu tiên gọi tới: 0 video (có thể kênh mới, ít video). Kênh
+        // thứ hai: có video bình thường. Đây LÀ tình huống hợp lệ, không
+        // phải bug — không nên bị nhầm với case "toàn bộ đều 0".
+        opts.onload(callCount === 1
+            ? { status: 200, responseText: '<feed></feed>' }
+            : { status: 200, responseText: SAMPLE_RSS });
+    };
+
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    const pre = await SimilarityFarm.preview();
+
+    assertFalse(pre.likelyFetchFailure, '1/2 kênh có video → KHÔNG được coi là lỗi, đây là tình huống bình thường (1 kênh ít/không có video gần đây)');
+    assertTrue(pre.totalEntries > 0);
+});
+
+test('run(): TẤT CẢ kênh đều trả về 0 video → trả ok:false với thông báo lỗi rõ ràng, KHÔNG báo "hoàn tất" giả (đúng bug user gặp)', async () => {
+    setupMocks({ similarityReportUrl: 'https://worker.example.com' });
+    global.GM_xmlhttpRequest = (opts) => {
+        opts.onload({ status: 200, responseText: '<feed></feed>' });
+    };
+    global.EpisodeEngine = { _internal: { _jaccardRaw: () => ({ score: 0 }), JACCARD_THRESHOLD: 0.5 } };
+    let reportCalled = false;
+    global.SimilarityReport = { isConfigured: () => true, report: () => { reportCalled = true; } };
+
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    const result = await SimilarityFarm.run();
+
+    assertFalse(result.ok, 'KHÔNG được báo ok:true khi toàn bộ kênh đều 0 video — đây chính là bug user gặp qua ảnh chụp');
+    assertTrue(result.error.length > 0, 'phải có thông báo lỗi cho user biết, không phải âm thầm im lặng');
+    assertFalse(reportCalled, 'không có gì để report khi 0 video — không được gọi SimilarityReport.report() vô ích');
+});
+
 run().then(() => process.exit(process.exitCode || 0));

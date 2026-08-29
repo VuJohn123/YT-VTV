@@ -88,6 +88,19 @@
 
         alert('⏳ Đang tính trước số lượng (fetch RSS từng kênh)... bấm OK rồi đợi 1 lát, sẽ có confirm tiếp theo.');
         const pre = await SimilarityFarm.preview();
+
+        if (pre.likelyFetchFailure) {
+            alert(
+                `❌ Cả ${pre.channels} kênh đều trả về 0 video khi fetch RSS — nhiều khả năng lỗi ` +
+                `mạng/bị chặn/RSS đổi định dạng, KHÔNG PHẢI trùng hợp cả ${pre.channels} kênh cùng lúc ` +
+                `không có video nào gần đây.\n\n` +
+                `Mở DevTools Console (F12 → tab Console) rồi thử lại, tìm dòng bắt đầu bằng ` +
+                `"[SimilarityFarm]" để xem chi tiết lỗi thật (status code, hoặc 300 ký tự đầu response ` +
+                `nhận được) — mình chưa thể tự chẩn đoán chính xác nguyên nhân từ xa được, cần xem log đó.`
+            );
+            return;
+        }
+
         const willSend = Math.min(pre.totalPairs, SimilarityFarm._internal.MAX_REPORTS_PER_RUN);
         const capped = pre.totalPairs > SimilarityFarm._internal.MAX_REPORTS_PER_RUN;
 

@@ -161,17 +161,51 @@ const SimilarityFarm = (() => {
             .replace(/&amp;/g, '&');
     }
 
+    /**
+     * BUG THẬT ĐÃ GẶP (user báo qua ảnh chụp): "Farm hoàn tất! Video tổng
+     * cộng: 0" cho CẢ 6/6 kênh cùng lúc — quá trùng hợp để là do từng kênh
+     * riêng lẻ không có video (khả năng cực thấp cả 6 kênh CÙNG lúc 0 video
+     * gần đây). Nguyên nhân thật (lỗi mạng? bị chặn/redirect? response
+     * không phải RSS như mong đợi? định dạng RSS đã đổi?) KHÔNG kiểm tra
+     * chắc chắn được từ đây — không có cách tự fetch RSS thật để xác nhận
+     * (không đoán mù). Đây là 1 bug THẬT SỰ khác, chắc chắn: dù lý do gốc là
+     * gì, code TRƯỚC ĐÂY luôn ÂM THẦM trả về mảng rỗng bất kể fail vì lý do
+     * gì (network error, status lỗi, hay 2xx nhưng parse ra 0 entry) — chỉ
+     * warn() ra console, USER KHÔNG BAO GIỜ THẤY GÌ trừ khi tự mở DevTools.
+     * Kết quả: dialog "Farm hoàn tất!" (ok: true) hiện ra dù MỌI request
+     * đều thất bại — sai lầm UX nghiêm trọng, khiến bug im lặng, khó chẩn
+     * đoán. Sửa: log đầy đủ chi tiết (status, độ dài response, 300 ký tự
+     * đầu) để user tự debug qua console khi cần, VÀ ở tầng preview()/run()
+     * phát hiện "TOÀN BỘ kênh đều 0 video" là bất thường → báo lỗi rõ ràng
+     * thay vì coi là "hoàn tất" bình thường (xem preview()/run() bên dưới).
+     */
     function _fetchFeed(channelId) {
         return new Promise((resolve) => {
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`,
                 onload: (res) => {
-                    if (res.status >= 200 && res.status < 300) resolve(_parseFeed(res.responseText));
-                    else { warn('[SimilarityFarm] fetch feed lỗi, status:', res.status, 'kênh:', channelId); resolve([]); }
+                    if (res.status >= 200 && res.status < 300) {
+                        const entries = _parseFeed(res.responseText);
+                        if (entries.length === 0) {
+                            // 2xx nhưng parse ra 0 — có thể response KHÔNG
+                            // PHẢI RSS thật (trang lỗi/redirect/consent...)
+                            // dù status vẫn báo thành công. In hẳn đoạn đầu
+                            // response ra console để user/chính mình lần sau
+                            // tự đối chiếu được là gì, không phải đoán mù.
+                            warn('[SimilarityFarm] kênh', channelId, '— status', res.status,
+                                'nhưng parse ra 0 video. response dài', res.responseText.length, 'ký tự. 300 ký tự đầu:',
+                                res.responseText.slice(0, 300));
+                        }
+                        resolve(entries);
+                    } else {
+                        warn('[SimilarityFarm] fetch feed lỗi, status:', res.status, 'kênh:', channelId,
+                            '— response:', (res.responseText || '').slice(0, 300));
+                        resolve([]);
+                    }
                 },
-                onerror: () => { warn('[SimilarityFarm] fetch feed lỗi mạng, kênh:', channelId); resolve([]); },
-                ontimeout: () => resolve([]),
+                onerror: (e) => { warn('[SimilarityFarm] fetch feed lỗi mạng, kênh:', channelId, e); resolve([]); },
+                ontimeout: () => { warn('[SimilarityFarm] fetch feed timeout, kênh:', channelId); resolve([]); },
             });
         });
     }
@@ -199,13 +233,20 @@ const SimilarityFarm = (() => {
     async function preview() {
         const whitelist = getWhitelist();
         if (!whitelist.length) return { channels: 0, totalEntries: 0, totalPairs: 0 }; // whitelist rỗng khi user đã loại trừ HẾT seed lẫn không tự thêm gì — hiếm, vì mặc định luôn có VTV_KNOWN_CHANNELS
-        let totalEntries = 0, totalPairs = 0;
+        let totalEntries = 0, totalPairs = 0, channelsWithZero = 0;
         for (const ch of whitelist) {
             const entries = await _fetchFeed(ch.channelId);
+            if (entries.length === 0) channelsWithZero++;
             totalEntries += entries.length;
             totalPairs += (entries.length * (entries.length - 1)) / 2;
         }
-        return { channels: whitelist.length, totalEntries, totalPairs };
+        // TOÀN BỘ kênh đều 0 video — gần như chắc chắn là lỗi fetch/parse
+        // (xem comment dài ở _fetchFeed()), KHÔNG PHẢI trùng hợp "6 kênh VTV
+        // cùng lúc không có video nào gần đây". Đánh dấu rõ để caller (menu
+        // handler ở entry.js) báo lỗi thay vì tiếp tục confirm() với số 0
+        // như thể đó là kết quả bình thường.
+        const likelyFetchFailure = whitelist.length > 0 && channelsWithZero === whitelist.length;
+        return { channels: whitelist.length, totalEntries, totalPairs, likelyFetchFailure };
     }
 
     /**
@@ -223,6 +264,18 @@ const SimilarityFarm = (() => {
         for (const ch of whitelist) {
             const entries = await _fetchFeed(ch.channelId);
             perChannelEntries.push({ channel: ch, entries });
+        }
+
+        // Cùng lý do như likelyFetchFailure ở preview() — nếu TOÀN BỘ kênh
+        // trả về 0 video, đây là lỗi fetch/parse, không phải "hoàn tất
+        // thành công với 0 video". Trả ok:false thay vì báo hoàn tất giả.
+        if (perChannelEntries.length > 0 && perChannelEntries.every(c => c.entries.length === 0)) {
+            return {
+                ok: false,
+                error: `Cả ${perChannelEntries.length} kênh đều trả về 0 video — nhiều khả năng lỗi fetch/parse RSS ` +
+                       `(không phải trùng hợp cả ${perChannelEntries.length} kênh cùng lúc không có video). ` +
+                       `Mở DevTools Console (F12) tìm dòng "[SimilarityFarm]" để xem chi tiết lỗi.`,
+            };
         }
 
         const allPairs = [];

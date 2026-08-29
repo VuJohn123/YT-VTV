@@ -2,8 +2,8 @@
 // @name         VTV Giải Trí Ultimate
 // @namespace    https://github.com/VuJohn123/YT-VTV
 // @icon         https://yt3.ggpht.com/vs_RBzRO4Z-OoX2arjzu1A7e7g_RpAMLRXVVkRf07rh1DVaSWNf1HcuSj2MP6v3dsbEtnTgqOZc=s48-c-k-c0x00ffffff-no-rj
-// @version      15.17
-// @description  Tự động điều hướng tập phim VTV Giải Trí — Farm Mode dùng sẵn seed list kênh VTV, thêm ID thật VTV Giải Trí Official + VFC Official vào whitelist
+// @version      15.18
+// @description  Tự động điều hướng tập phim VTV Giải Trí — Farm Mode phát hiện fetch-fail thay vì báo "hoàn tất" giả khi 0 video
 // @author       VuJohn123
 // @match        https://www.youtube.com/*
 // @grant        GM_addStyle
