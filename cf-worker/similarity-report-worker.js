@@ -23,10 +23,12 @@
 const MAX_BODY_BYTES = 2048;
 
 // Free tier Cloudflare Workers: 1000 subrequest tới KV/invocation (đã
-// research kỹ — free plan Workers giới hạn 50 subrequest RA NGOÀI internet
-// nhưng riêng subrequest tới dịch vụ Cloudflare như KV là 1000/invocation,
-// KHÁC hẳn giới hạn 50 hay bị nhầm). Cap ở 1000 để /stats luôn nằm gọn
-// trong 1 invocation free tier, không cần trả phí/nâng cấp gói.
+// research kỹ, tái xác nhận qua nguồn chính thức Cloudflare — Changelog
+// 2026-02-11 "Workers are no longer limited to 1000 subrequests": free plan
+// giới hạn 50 subrequest RA NGOÀI internet nhưng riêng subrequest tới dịch
+// vụ Cloudflare CÙNG ACCOUNT như KV là 1000/invocation, KHÁC hẳn giới hạn
+// 50 hay bị nhầm). Cap ở 1000 để /stats luôn nằm gọn trong 1 invocation
+// free tier, không cần trả phí/nâng cấp gói.
 const MAX_STATS_READS = 1000;
 
 function jsonResponse(obj, status = 200) {

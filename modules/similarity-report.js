@@ -26,6 +26,13 @@
 
 const SimilarityReport = (() => {
     const CONFIG_KEY = 'similarityReportUrl';
+    // Cùng bug Network Handling đã fix ở sponsor-block.js/tv-mode.js (audit
+    // toàn dự án). Ở đây ít quan trọng hơn (fire-and-forget, không block gì
+    // — xem onload rỗng bên dưới) nhưng vẫn nên set để request thật sự tự
+    // dọn dẹp thay vì treo vô thời hạn trong hàng đợi network của trình
+    // duyệt (tích tụ nhiều request "ma" theo thời gian nếu server không
+    // phản hồi, dù không gây lỗi thấy được ngay).
+    const REQUEST_TIMEOUT_MS = 10_000;
 
     function _getUrl() {
         return Storage.getGlobal(CONFIG_KEY, '');
@@ -35,8 +42,42 @@ const SimilarityReport = (() => {
         return !!_getUrl();
     }
 
+    /**
+     * Validate cơ bản trước khi lưu — chặn lỗi gõ nhầm phổ biến (URL thiếu
+     * scheme, dán nhầm URL không phải http/https như javascript:, hoặc URL
+     * rõ ràng sai định dạng) TRƯỚC KHI lưu vào GM storage, thay vì để lỗi
+     * âm thầm xảy ra ở tận lúc GM_xmlhttpRequest thật sự chạy (fire-and-
+     * forget, user sẽ KHÔNG BAO GIỜ biết report đang gửi đi đâu/có gửi được
+     * không — xem onload rỗng trong report()). Đây không phải phòng thủ
+     * trước "tấn công" (user tự cấu hình URL của chính mình, không có bên
+     * thứ 3 nào can thiệp được vào giá trị này) — mục đích là chặn user tự
+     * gõ nhầm, và tuân thủ nguyên tắc validate input cơ bản của code
+     * production-ready.
+     * @returns {{ok:boolean, error?:string}}
+     */
+    function _validateUrl(url) {
+        const trimmed = (url || '').trim();
+        if (!trimmed) return { ok: true }; // rỗng = tắt tính năng, hợp lệ
+        let parsed;
+        try { parsed = new URL(trimmed); }
+        catch (e) { return { ok: false, error: 'URL không hợp lệ — thiếu "https://" ở đầu?' }; }
+        if (parsed.protocol !== 'https:') {
+            return { ok: false, error: `Chỉ chấp nhận URL https:// (nhận được "${parsed.protocol}") — GM_xmlhttpRequest cần HTTPS để đảm bảo dữ liệu không bị đọc/sửa giữa đường.` };
+        }
+        return { ok: true };
+    }
+
+    /**
+     * @param {string} url
+     * @returns {{ok:boolean, error?:string}} — caller (menu command trong
+     * entry.js) PHẢI kiểm tra `ok` để báo lỗi rõ cho user thay vì âm thầm
+     * lưu 1 URL sai (xem comment ở _validateUrl()).
+     */
     function configure(url) {
+        const validation = _validateUrl(url);
+        if (!validation.ok) return validation;
         Storage.setGlobal(CONFIG_KEY, (url || '').trim());
+        return { ok: true };
     }
 
     /**
@@ -75,6 +116,7 @@ const SimilarityReport = (() => {
                 url,
                 headers: { 'Content-Type': 'application/json' },
                 data: payload,
+                timeout: REQUEST_TIMEOUT_MS,
                 onload: () => {}, // fire-and-forget — không cần biết kết quả, không được phép làm chậm/chặn flow chính
                 onerror: (e) => warn('[SimilarityReport] gửi lỗi (bỏ qua, không ảnh hưởng tính năng chính):', e),
                 ontimeout: () => {},

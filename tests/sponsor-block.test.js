@@ -80,4 +80,29 @@ test('Server lỗi HTTP 500 → báo lỗi, không coi là thành công', async 
     assertFalse(r.ok);
 });
 
+// ── Network Handling audit (Production checklist) ──────────────────────────
+// BUG THẬT ĐÃ FIX: GM_xmlhttpRequest có sẵn callback `ontimeout` nhưng
+// KHÔNG có field `timeout` — GM_xmlhttpRequest KHÔNG tự đặt timeout mặc
+// định, nên `ontimeout` không bao giờ được gọi, request có thể treo vô
+// thời hạn nếu server không phản hồi. Cùng bug này có mặt ở CẢ 5/5 chỗ
+// dùng GM_xmlhttpRequest trong toàn bộ codebase (audit đã sửa hết). Test
+// này canh gác riêng cho module có nguy cơ ảnh hưởng cao nhất (chạy trên
+// MỌI video, không opt-in) — nếu ai vô tình xoá field `timeout` sau này,
+// test này phải fail ngay.
+
+test('_gmFetch()/_gmPost() PHẢI truyền field `timeout` cho GM_xmlhttpRequest (không chỉ có ontimeout suông)', async () => {
+    const SponsorBlock = freshSponsorBlock();
+    let capturedOpts = null;
+    global.GM_xmlhttpRequest = (opts) => {
+        capturedOpts = opts;
+        opts.onload({ status: 404, responseText: '' }); // 404 = không có segment, nhánh hợp lệ đơn giản nhất để trigger 1 lần gọi
+    };
+
+    await SponsorBlock.getSegments('SOME_VIDEO_ID');
+
+    assertTrue(!!capturedOpts, 'setup: GM_xmlhttpRequest phải được gọi');
+    assertEqual(typeof capturedOpts.timeout, 'number', 'field `timeout` phải là 1 số hợp lệ — thiếu field này khiến ontimeout callback không bao giờ được kích hoạt (GM_xmlhttpRequest không tự timeout)');
+    assertTrue(capturedOpts.timeout > 0, 'timeout phải > 0, không được là 0/undefined/NaN');
+});
+
 run().then(() => process.exit(process.exitCode || 0));

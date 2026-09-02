@@ -731,6 +731,7 @@ const UI = (() => {
 
                 _renderTvPanel();
             } catch (err) {
+                warn('[UI] Ghép nối/kết nối TV thất bại:', err);
                 msgEl.textContent = '❌ ' + (err.message || 'Lỗi kết nối TV');
                 e.target.disabled = false;
             }

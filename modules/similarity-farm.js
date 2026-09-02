@@ -53,6 +53,12 @@ const SimilarityFarm = (() => {
     const EXCLUDED_KEY  = 'similarityFarmExcludedSeeds'; // JSON array of channelId — kênh mặc định (seed) mà user chọn LOẠI khỏi farm
     const MAX_REPORTS_PER_RUN = 800; // xem giải thích quota ở comment đầu file — cố tình < 1000 (giới hạn ghi/ngày thật của Cloudflare KV free tier)
     const REPORT_DELAY_MS = 200; // giãn cách giữa các report — free tier không throttle theo giây (chỉ hard-cap theo ngày), nhưng vẫn là hành vi tốt, tránh burst dồn dập vô ích
+    const RETRY_DELAY_MS = 1500; // đợi trước khi retry lỗi transient — đủ để tránh spam ngay lập tức vào server đang gặp sự cố tạm thời, không quá lâu làm farm chạy ì ạch
+    // Cùng bug Network Handling đã fix ở sponsor-block.js/tv-mode.js/
+    // similarity-report.js (audit toàn dự án). RSS feed videos.xml có thể
+    // nặng hơn 1 API call JSON nhỏ (nhiều entry, media metadata) nên cho
+    // timeout rộng hơn SponsorBlock 1 chút.
+    const REQUEST_TIMEOUT_MS = 12_000;
 
     function _getUserList() {
         try {
@@ -178,12 +184,23 @@ const SimilarityFarm = (() => {
      * đầu) để user tự debug qua console khi cần, VÀ ở tầng preview()/run()
      * phát hiện "TOÀN BỘ kênh đều 0 video" là bất thường → báo lỗi rõ ràng
      * thay vì coi là "hoàn tất" bình thường (xem preview()/run() bên dưới).
+     *
+     * RETRY (audit Well-Intelligent/Network Handling): 1 lần retry sau
+     * RETRY_DELAY_MS CHỈ cho lỗi mạng/timeout (network error, timeout, hay
+     * status 5xx server tạm thời quá tải) — đây là những lỗi TRANSIENT thật
+     * sự có khả năng tự khỏi nếu thử lại. KHÔNG retry cho case "2xx nhưng
+     * parse ra 0 entry" — đó nhiều khả năng là lỗi THẬT (response không phải
+     * RSS, API đổi format), retry vô ích chỉ tốn thời gian, và KHÔNG retry
+     * cho 4xx (lỗi phía client — channel ID sai chẳng hạn — thử lại y hệt
+     * vẫn sẽ lỗi y hệt). Well-Intelligent nghĩa là biết PHÂN BIỆT loại lỗi
+     * nào đáng thử lại, không phải retry mù mọi thứ.
      */
-    function _fetchFeed(channelId) {
+    function _fetchFeedOnce(channelId) {
         return new Promise((resolve) => {
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`,
+                timeout: REQUEST_TIMEOUT_MS,
                 onload: (res) => {
                     if (res.status >= 200 && res.status < 300) {
                         const entries = _parseFeed(res.responseText);
@@ -197,17 +214,41 @@ const SimilarityFarm = (() => {
                                 'nhưng parse ra 0 video. response dài', res.responseText.length, 'ký tự. 300 ký tự đầu:',
                                 res.responseText.slice(0, 300));
                         }
-                        resolve(entries);
+                        resolve({ entries, transientFailure: false });
                     } else {
                         warn('[SimilarityFarm] fetch feed lỗi, status:', res.status, 'kênh:', channelId,
                             '— response:', (res.responseText || '').slice(0, 300));
-                        resolve([]);
+                        // 5xx = server tạm quá tải, đáng retry. 4xx = lỗi
+                        // phía request (vd channel ID sai) — thử lại vô ích.
+                        resolve({ entries: [], transientFailure: res.status >= 500 });
                     }
                 },
-                onerror: (e) => { warn('[SimilarityFarm] fetch feed lỗi mạng, kênh:', channelId, e); resolve([]); },
-                ontimeout: () => { warn('[SimilarityFarm] fetch feed timeout, kênh:', channelId); resolve([]); },
+                onerror: (e) => { warn('[SimilarityFarm] fetch feed lỗi mạng, kênh:', channelId, e); resolve({ entries: [], transientFailure: true }); },
+                ontimeout: () => { warn('[SimilarityFarm] fetch feed timeout, kênh:', channelId); resolve({ entries: [], transientFailure: true }); },
             });
         });
+    }
+
+    function _delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    /**
+     * Wrapper retry cho _fetchFeedOnce() — 1 lần thử lại sau RETRY_DELAY_MS
+     * CHỈ khi lần đầu thất bại vì lý do transient (xem phân loại
+     * transientFailure trong _fetchFeedOnce()). Tổng cộng tối đa 2 lần gọi
+     * network/kênh — không retry vô hạn (tôn trọng quota Cloudflare KV free
+     * tier và không làm farm chạy lâu vô ích nếu server thật sự đang down).
+     */
+    async function _fetchFeed(channelId) {
+        const first = await _fetchFeedOnce(channelId);
+        if (!first.transientFailure) return first.entries;
+
+        log('[SimilarityFarm] kênh', channelId, '— lỗi transient, thử lại sau', RETRY_DELAY_MS, 'ms');
+        await _delay(RETRY_DELAY_MS);
+        const second = await _fetchFeedOnce(channelId);
+        if (second.transientFailure) {
+            warn('[SimilarityFarm] kênh', channelId, '— vẫn lỗi sau khi retry, bỏ qua kênh này');
+        }
+        return second.entries;
     }
 
     /** Fisher-Yates rồi cắt N phần tử đầu — lấy mẫu KHÔNG thiên lệch khi phải
@@ -221,8 +262,6 @@ const SimilarityFarm = (() => {
         }
         return copy.slice(0, n);
     }
-
-    function _delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
     /** Tính trước tổng số cặp sẽ so sánh nếu chạy whitelist hiện tại — dùng
      * để hiện confirm dialog TRƯỚC KHI thật sự fetch/gửi gì (user cần biết

@@ -287,4 +287,108 @@ test('run(): TẤT CẢ kênh đều trả về 0 video → trả ok:false với
     assertFalse(reportCalled, 'không có gì để report khi 0 video — không được gọi SimilarityReport.report() vô ích');
 });
 
+test('_fetchFeed() PHẢI truyền field `timeout` cho GM_xmlhttpRequest (Network Handling audit — xem tests/sponsor-block.test.js)', async () => {
+    setupMocks({ similarityReportUrl: 'https://worker.example.com' });
+    let capturedOpts = null;
+    global.GM_xmlhttpRequest = (opts) => {
+        capturedOpts = opts;
+        opts.onload({ status: 200, responseText: SAMPLE_RSS });
+    };
+
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    await SimilarityFarm.preview();
+
+    assertTrue(!!capturedOpts, 'setup: GM_xmlhttpRequest phải được gọi ít nhất 1 lần');
+    assertEqual(typeof capturedOpts.timeout, 'number', 'field `timeout` phải có mặt và là số — thiếu nó khiến request có thể treo vô thời hạn');
+    assertTrue(capturedOpts.timeout > 0);
+});
+
+// ── Retry logic (Well-Intelligent audit) ────────────────────────────────────
+// _fetchFeed() phải PHÂN BIỆT lỗi transient (đáng retry) với lỗi thật (không
+// đáng retry) — retry mù mọi loại lỗi vừa lãng phí thời gian vừa không "thông
+// minh". Test dùng biến đếm số lần gọi thay vì response queue tĩnh (setupMocks
+// trong file này chỉ hỗ trợ 1 response cố định), vì cần hành vi KHÁC NHAU giữa
+// lần gọi 1 và lần gọi 2 cho cùng 1 kênh.
+
+test('_fetchFeed(): lỗi mạng ở lần đầu, THÀNH CÔNG ở lần retry → phải trả về entries của lần retry (không bỏ cuộc sau 1 lần)', async () => {
+    setupMocks({ similarityReportUrl: 'https://worker.example.com' });
+    let callCount = 0;
+    global.GM_xmlhttpRequest = (opts) => {
+        callCount++;
+        if (callCount === 1) opts.onerror(new Error('network down'));
+        else opts.onload({ status: 200, responseText: SAMPLE_RSS });
+    };
+
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    // Chỉ có 1 kênh trong whitelist test để đếm số lần gọi chính xác — dùng
+    // removeChannel bớt 1 seed, addChannel thêm đúng 1 kênh cần test.
+    SimilarityFarm.removeChannel('UCseed2');
+    const pre = await SimilarityFarm.preview();
+
+    assertEqual(callCount, 2, 'phải gọi network đúng 2 lần: lần đầu lỗi + 1 lần retry (không phải bỏ cuộc ngay, cũng không phải retry vô hạn)');
+    assertEqual(pre.totalEntries, 3, 'lần retry thành công phải trả về đúng 3 video từ SAMPLE_RSS, không phải mảng rỗng của lần đầu');
+});
+
+test('_fetchFeed(): status 4xx (lỗi phía request, VD channel ID sai) → KHÔNG retry, chỉ gọi network đúng 1 lần', async () => {
+    setupMocks({ similarityReportUrl: 'https://worker.example.com' });
+    let callCount = 0;
+    global.GM_xmlhttpRequest = (opts) => {
+        callCount++;
+        opts.onload({ status: 404, responseText: 'not found' });
+    };
+
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    SimilarityFarm.removeChannel('UCseed2');
+    await SimilarityFarm.preview();
+
+    assertEqual(callCount, 1, '4xx là lỗi phía request (không phải server tạm quá tải) — retry vô ích vì sẽ lỗi y hệt, KHÔNG được retry');
+});
+
+test('_fetchFeed(): status 5xx (server tạm quá tải) → CÓ retry (khác 4xx)', async () => {
+    setupMocks({ similarityReportUrl: 'https://worker.example.com' });
+    let callCount = 0;
+    global.GM_xmlhttpRequest = (opts) => {
+        callCount++;
+        opts.onload({ status: 503, responseText: 'service unavailable' });
+    };
+
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    SimilarityFarm.removeChannel('UCseed2');
+    await SimilarityFarm.preview();
+
+    assertEqual(callCount, 2, '5xx là lỗi server tạm thời — ĐÁNG retry (khác 4xx), phải gọi đúng 2 lần');
+});
+
+test('_fetchFeed(): 2xx nhưng parse ra 0 entry → KHÔNG retry (khác lỗi mạng/5xx — nhiều khả năng là lỗi định dạng thật, retry vô ích)', async () => {
+    setupMocks({ similarityReportUrl: 'https://worker.example.com' });
+    let callCount = 0;
+    global.GM_xmlhttpRequest = (opts) => {
+        callCount++;
+        opts.onload({ status: 200, responseText: '<feed></feed>' });
+    };
+
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    SimilarityFarm.removeChannel('UCseed2');
+    await SimilarityFarm.preview();
+
+    assertEqual(callCount, 1, '2xx-nhưng-0-entry KHÔNG được coi là transient — retry sẽ chỉ lãng phí thời gian nếu response luôn vậy (API đổi format thật)');
+});
+
+test('_fetchFeed(): lỗi CẢ 2 lần (lần đầu + lần retry) → trả về mảng rỗng, không throw, không retry lần 3', async () => {
+    setupMocks({ similarityReportUrl: 'https://worker.example.com' });
+    let callCount = 0;
+    global.GM_xmlhttpRequest = (opts) => {
+        callCount++;
+        opts.ontimeout();
+    };
+
+    const SimilarityFarm = loadModule('similarity-farm.js', 'SimilarityFarm');
+    SimilarityFarm.removeChannel('UCseed2');
+    const pre = await SimilarityFarm.preview();
+
+    assertEqual(callCount, 2, 'đúng 2 lần (1 gốc + 1 retry), KHÔNG retry thêm lần 3 dù vẫn lỗi — tránh vòng lặp retry vô hạn');
+    assertEqual(pre.totalEntries, 0);
+    assertTrue(pre.likelyFetchFailure, 'lỗi cả 2 lần cho kênh duy nhất → vẫn phải đánh dấu likelyFetchFailure đúng như thiết kế');
+});
+
 run().then(() => process.exit(process.exitCode || 0));

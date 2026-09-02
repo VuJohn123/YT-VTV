@@ -33,6 +33,13 @@
 
 const TvMode = (() => {
     const BASE = 'https://www.youtube.com/api/lounge';
+    // Cùng bug Network Handling đã fix ở sponsor-block.js (audit toàn dự
+    // án — ontimeout có sẵn nhưng thiếu field timeout nên không bao giờ tự
+    // kích hoạt). 15s (dài hơn SponsorBlock 10s) vì đây là API reverse-
+    // engineered không có SLA chính thức (xem cảnh báo đầu file) — cho mạng
+    // chậm/TV phản hồi trễ thêm biên độ, tránh false-positive "timeout" khi
+    // thật ra chỉ đang chậm bình thường.
+    const REQUEST_TIMEOUT_MS = 15_000;
 
     let _loungeToken = null;
     let _screenId    = null;
@@ -53,6 +60,7 @@ const TvMode = (() => {
                 url,
                 data: opts.data,
                 headers: opts.headers,
+                timeout: REQUEST_TIMEOUT_MS,
                 onload: (res) => resolve(res),
                 onerror: (err) => reject(err),
                 ontimeout: () => reject(new Error('timeout')),

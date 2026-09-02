@@ -33,7 +33,11 @@
             current
         );
         if (input === null) return; // user bấm Cancel
-        SimilarityReport.configure(input);
+        const result = SimilarityReport.configure(input);
+        if (!result.ok) {
+            alert('❌ ' + result.error + '\n\nURL chưa được lưu, thử lại.');
+            return;
+        }
         alert(input.trim() ? '✅ Đã lưu — bắt đầu gửi report ẩn danh từ giờ.' : '✅ Đã tắt Similarity Report.');
     });
 

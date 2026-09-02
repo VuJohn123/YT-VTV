@@ -42,6 +42,9 @@ test('Đã cấu hình URL → report() gửi đúng payload qua GM_xmlhttpReque
     assertTrue(!!capturedCall, 'Phải gọi GM_xmlhttpRequest khi đã cấu hình URL');
     assertEqual(capturedCall.method, 'POST');
     assertEqual(capturedCall.url, 'https://vtv-similarity-report.example.workers.dev');
+    // Network Handling audit — xem giải thích đầy đủ ở tests/sponsor-block.test.js
+    assertEqual(typeof capturedCall.timeout, 'number', 'field `timeout` phải có mặt và là số — thiếu nó khiến request có thể treo vô thời hạn');
+    assertTrue(capturedCall.timeout > 0);
 
     const payload = JSON.parse(capturedCall.data);
     assertEqual(payload.a, 'thương ngày nắng về', 'Tên series phải được lowercase trước khi gửi');
@@ -60,6 +63,58 @@ test('configure() lưu/xoá URL qua Storage.setGlobal đúng key', () => {
 
     SimilarityReport.configure('');
     assertEqual(store.similarityReportUrl, '', 'Để trống phải tắt hẳn (không giữ URL cũ)');
+});
+
+// ── Validate URL trước khi lưu (No Exploitations / input validation audit) ─
+test('configure(): URL hợp lệ (https://) → ok:true, lưu bình thường', () => {
+    const store = setupMocks('');
+    global.GM_xmlhttpRequest = () => {};
+    const SimilarityReport = loadModule('similarity-report.js', 'SimilarityReport');
+
+    const result = SimilarityReport.configure('https://worker.example.workers.dev');
+    assertTrue(result.ok);
+    assertEqual(store.similarityReportUrl, 'https://worker.example.workers.dev');
+});
+
+test('configure(): chuỗi rỗng → ok:true (tắt tính năng là hành động hợp lệ, không phải lỗi)', () => {
+    const store = setupMocks('https://old.example.com');
+    global.GM_xmlhttpRequest = () => {};
+    const SimilarityReport = loadModule('similarity-report.js', 'SimilarityReport');
+
+    const result = SimilarityReport.configure('');
+    assertTrue(result.ok);
+    assertEqual(store.similarityReportUrl, '');
+});
+
+test('configure(): URL thiếu scheme (gõ nhầm phổ biến) → ok:false, KHÔNG lưu, không phá URL cũ', () => {
+    const store = setupMocks('https://old.example.com');
+    global.GM_xmlhttpRequest = () => {};
+    const SimilarityReport = loadModule('similarity-report.js', 'SimilarityReport');
+
+    const result = SimilarityReport.configure('worker.example.workers.dev'); // thiếu "https://"
+    assertFalse(result.ok);
+    assertTrue(result.error.length > 0, 'phải có thông báo lỗi rõ ràng');
+    assertEqual(store.similarityReportUrl, 'https://old.example.com', 'URL cũ phải giữ nguyên, không bị ghi đè bởi input sai');
+});
+
+test('configure(): URL http:// (không phải https://) → ok:false', () => {
+    setupMocks('');
+    global.GM_xmlhttpRequest = () => {};
+    const SimilarityReport = loadModule('similarity-report.js', 'SimilarityReport');
+
+    const result = SimilarityReport.configure('http://worker.example.com');
+    assertFalse(result.ok);
+    assertTrue(result.error.includes('https'), 'lỗi phải nói rõ lý do là thiếu https');
+});
+
+test('configure(): scheme khác lạ (javascript:, ftp:...) → ok:false, không lưu', () => {
+    const store = setupMocks('');
+    global.GM_xmlhttpRequest = () => {};
+    const SimilarityReport = loadModule('similarity-report.js', 'SimilarityReport');
+
+    const result = SimilarityReport.configure('javascript:alert(1)');
+    assertFalse(result.ok);
+    assertEqual(store.similarityReportUrl, '');
 });
 
 run().then(() => process.exit(process.exitCode || 0));

@@ -15,6 +15,17 @@
 const SponsorBlock = (() => {
     const API_BASE = 'https://sponsor.ajay.app/api/skipSegments';
     const CACHE_TTL = 30 * 60_000; // 30 phút — segment cộng đồng ít khi đổi nhanh
+    // BUG THẬT ĐÃ FIX (audit Network Handling toàn dự án — phát hiện CẢ 5/5
+    // chỗ dùng GM_xmlhttpRequest trong toàn bộ codebase đều có sẵn
+    // `ontimeout` callback nhưng KHÔNG chỗ nào set field `timeout`, khiến
+    // `ontimeout` KHÔNG BAO GIỜ được gọi — GM_xmlhttpRequest mặc định
+    // KHÔNG tự timeout, request có thể treo vô thời hạn nếu server không
+    // phản hồi. Nghiêm trọng nhất ở chính module này vì getSegments() chạy
+    // trên MỌI video (không opt-in như Farm Mode/Similarity Report), nên
+    // request treo ở đây ảnh hưởng trực tiếp tới flow xem phim chính. 10s
+    // đủ rộng rãi cho 1 API call nhỏ (trả về JSON vài KB) nhưng vẫn đủ chặt
+    // để không làm user cảm thấy "đơ" nếu server thật sự không phản hồi.
+    const REQUEST_TIMEOUT_MS = 10_000;
     const _cache = new Map(); // videoId → { segments, timestamp }
 
     // Categories mặc định: bỏ qua 'poi_highlight' (highlight KHÔNG nên tự skip,
@@ -39,6 +50,7 @@ const SponsorBlock = (() => {
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: 'GET', url,
+                timeout: REQUEST_TIMEOUT_MS,
                 onload: (res) => resolve(res),
                 onerror: (err) => reject(err),
                 ontimeout: () => reject(new Error('timeout')),
@@ -96,6 +108,7 @@ const SponsorBlock = (() => {
                 method: 'POST', url,
                 headers: { 'Content-Type': 'application/json' },
                 data: JSON.stringify(bodyObj),
+                timeout: REQUEST_TIMEOUT_MS,
                 onload: (res) => resolve(res),
                 onerror: (err) => reject(err),
                 ontimeout: () => reject(new Error('timeout')),
